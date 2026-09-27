@@ -567,13 +567,15 @@ def build_notification(group, changes):
 
 
 def build_reset_notification(group, reminders):
-    labels = " / ".join(
-        f"{short_window_label(item['label'])} {round(item['remaining'])}%"
-        for item in reminders
-    )
-    title = f"⏰ CPA · {group['label']} · {labels} · 1小时内重置"
+    labels = " / ".join(short_window_label(item["label"]) for item in reminders)
+    title = f"⏰ CPA · {group['label']} · {labels} 重置提醒"
     body = "\n".join(format_window_lines(item)[0] for item in reminders)
     return title, body, "active"
+
+
+def is_seven_day_window(window):
+    label = str(window.get("label") or "")
+    return short_window_label(label) == "7d" or label.startswith("7 Day")
 
 
 def send_bark(title, body, level):
@@ -642,15 +644,29 @@ def process_group(state, group):
         reset_dt = parse_time(reset_value)
         if reset_dt and reset_value:
             seconds_until_reset = (reset_dt - now).total_seconds()
-            if (
-                0 < seconds_until_reset <= 3600
-                and old.get("reset_notice_for") != reset_value
+            one_hour_notified = (
+                old.get("reset_notice_1h_for") == reset_value
+                or old.get("reset_notice_for") == reset_value
+            )
+            if 0 < seconds_until_reset <= 3600 and not one_hour_notified:
+                reset_reminders.append({
+                    "id": wid,
+                    "label": window["label"],
+                    "remaining": window["remaining"],
+                    "reset": reset_value,
+                    "stage": "1h",
+                })
+            elif (
+                is_seven_day_window(window)
+                and 3600 < seconds_until_reset <= 86400
+                and old.get("reset_notice_1d_for") != reset_value
             ):
                 reset_reminders.append({
                     "id": wid,
                     "label": window["label"],
                     "remaining": window["remaining"],
                     "reset": reset_value,
+                    "stage": "1d",
                 })
 
         prev_windows[wid] = {
@@ -671,7 +687,11 @@ def process_group(state, group):
         title, body, level = build_reset_notification(group, reset_reminders)
         if send_bark(title, body, level):
             for reminder in reset_reminders:
-                prev_windows[reminder["id"]]["reset_notice_for"] = reminder["reset"]
+                if reminder["stage"] == "1h":
+                    prev_windows[reminder["id"]]["reset_notice_1h_for"] = reminder["reset"]
+                    prev_windows[reminder["id"]]["reset_notice_for"] = reminder["reset"]
+                else:
+                    prev_windows[reminder["id"]]["reset_notice_1d_for"] = reminder["reset"]
 
     prev_group["label"] = group["label"]
     prev_group["last_seen"] = int(time.time())
