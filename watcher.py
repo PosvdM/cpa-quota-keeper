@@ -566,6 +566,16 @@ def build_notification(group, changes):
     return title, "\n".join(lines), level
 
 
+def build_reset_notification(group, reminders):
+    labels = " / ".join(
+        f"{short_window_label(item['label'])} {round(item['remaining'])}%"
+        for item in reminders
+    )
+    title = f"⏰ CPA · {group['label']} · {labels} · 1小时内重置"
+    body = "\n".join(format_window_lines(item)[0] for item in reminders)
+    return title, body, "active"
+
+
 def send_bark(title, body, level):
     if not BARK_URL:
         log(f"Bark 未配置，跳过推送：{title}")
@@ -601,6 +611,8 @@ def process_group(state, group):
     prev_group = groups_state.setdefault(group["key"], {"windows": {}})
     prev_windows = prev_group.setdefault("windows", {})
     changes = []
+    reset_reminders = []
+    now = datetime.now(timezone.utc)
 
     for window in group["windows"]:
         wid = window["id"]
@@ -626,6 +638,21 @@ def process_group(state, group):
                 "remaining": window["remaining"],
             })
 
+        reset_value = window.get("reset")
+        reset_dt = parse_time(reset_value)
+        if reset_dt and reset_value:
+            seconds_until_reset = (reset_dt - now).total_seconds()
+            if (
+                0 < seconds_until_reset <= 3600
+                and old.get("reset_notice_for") != reset_value
+            ):
+                reset_reminders.append({
+                    "id": wid,
+                    "label": window["label"],
+                    "remaining": window["remaining"],
+                    "reset": reset_value,
+                })
+
         prev_windows[wid] = {
             **old,
             "severity": current,
@@ -639,6 +666,12 @@ def process_group(state, group):
         if send_bark(title, body, level):
             for change in changes:
                 prev_windows[change["id"]]["notified_severity"] = change["to"]
+
+    if reset_reminders:
+        title, body, level = build_reset_notification(group, reset_reminders)
+        if send_bark(title, body, level):
+            for reminder in reset_reminders:
+                prev_windows[reminder["id"]]["reset_notice_for"] = reminder["reset"]
 
     prev_group["label"] = group["label"]
     prev_group["last_seen"] = int(time.time())
