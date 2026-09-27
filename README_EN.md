@@ -1,21 +1,25 @@
 # CPA Quota Watcher
 
-A small Dockerized watcher for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) that actively refreshes quota data and sends threshold alerts to Bark.
+[中文](./README.md)
 
-## What it does
+Monitor Claude and Antigravity quotas in CLIProxyAPI and send alerts through Bark.
 
-- Polls CLIProxyAPI's Management API instead of relying on the web UI cache.
-- Reads Claude OAuth quota windows, including 5-hour, 7-day, and Fable quota when available.
-- Reads Antigravity quota groups such as Gemini and Claude/GPT.
-- Sends Bark alerts when remaining quota crosses 50%, 20%, 10%, or 0%.
-- Deduplicates alerts within the same severity band.
-- Sends a recovery notification when quota resets or returns to a healthier band.
-- Sends one reset reminder for every quota window when its reset is within 1 hour, regardless of the remaining percentage.
-- Sends an additional reminder for 7-day windows when the reset is within 1 day but still more than 1 hour away.
-- Persists separate 1-day and 1-hour reminder markers so restarting the watcher does not resend the same stage in the same reset cycle.
-- Persists state in `data/state.json`.
+## Features
 
-Example alert:
+- Refreshes quota data directly instead of reading cached values from the management page.
+- Supports Claude 5-hour, 7-day, and Fable quotas.
+- Supports Antigravity Gemini and Claude / GPT quota groups.
+- Sends alerts when remaining quota crosses `50%`, `20%`, `10%`, or `0%`.
+- Does not repeat alerts while a quota stays in the same threshold range.
+- Sends one recovery alert when quota returns to a healthier range.
+- Sends one reset reminder for every quota window within 1 hour of reset.
+- Sends an extra reset reminder for 7-day windows within 1 day of reset.
+- Keeps the 1-day and 1-hour reminders separate, so restarting the watcher does not resend the same reminder.
+- Stores state in `data/state.json`.
+
+## Notification examples
+
+Quota alert:
 
 ```text
 ⚠️ CPA · Claude · 7d 48%
@@ -32,27 +36,53 @@ Reset reminder:
 5h：94% | 07分 | 09/28 04:16
 ```
 
-The compact relative time is rounded within the real current unit:
+Recovery:
 
-- `< 1 hour` → minutes, e.g. `60分`
-- `1 hour – < 1 day` → hours, e.g. `03时`
-- `>= 1 day` → days, e.g. `04天`
+```text
+✅ CPA · Claude · 7d 已恢复
 
-## Files
+5h：83% | 02时 | 09/28 05:59
+7d：已恢复 | 03天 | 10/01 13:59
+```
 
-- `watcher.py` — quota polling, state machine, formatting, and Bark delivery
-- `compose.yaml` — Docker Compose service used by the current deployment
-- `.env.example` — safe configuration template
-- `.gitignore` — excludes secrets and runtime state
+## Time format
+
+Each line shows both a compact remaining time and the exact reset time:
+
+```text
+7d：48% | 03天 | 10/01 13:59
+```
+
+The compact value is rounded in the unit the remaining time currently falls into:
+
+- Under 1 hour: `59分`, `60分`
+- 1 hour to under 1 day: `02时`, `24时`
+- 1 day or more: `03天`, `04天`
 
 ## Setup
 
-1. Put this project next to your CLIProxyAPI deployment.
-2. Copy `.env.example` to `.env`.
-3. Set `BARK_URL`.
-4. Provide the CLIProxyAPI management key.
+### 1. Create the environment file
 
-The included `compose.yaml` matches the current deployment and loads an additional file:
+```bash
+cp .env.example .env
+```
+
+Set your Bark URL:
+
+```env
+BARK_URL=https://api.day.app/your_device_key
+BARK_GROUP=CPA
+```
+
+### 2. Provide the CLIProxyAPI management key
+
+You can put it in `.env`:
+
+```env
+CPA_MANAGEMENT_KEY=your_management_key
+```
+
+The included `compose.yaml` also reads:
 
 ```text
 /opt/cliproxyapi/watcher.env
@@ -60,48 +90,83 @@ The included `compose.yaml` matches the current deployment and loads an addition
 
 That file can contain:
 
-```text
+```env
 MANAGEMENT_PASSWORD=your_management_password
 ```
 
-Alternatively, set `CPA_MANAGEMENT_KEY` in `.env` and remove the extra `env_file` entry from `compose.yaml`.
+Use either method.
 
-The watcher expects the external Docker network `cliproxyapi_default` and reaches CPA at:
+### 3. Check the Docker network
 
-```text
-http://cliproxyapi:8317/v0/management
-```
+The included configuration assumes:
 
-Start it with:
+- the CLIProxyAPI container is named `cliproxyapi`
+- the Management API is available at `http://cliproxyapi:8317/v0/management`
+- the Docker network is named `cliproxyapi_default`
+
+Change `compose.yaml` or `.env` if your setup is different.
+
+### 4. Start the watcher
 
 ```bash
 docker compose up -d
 ```
 
-Check logs with:
+View logs:
 
 ```bash
 docker logs -f cpa-quota-watcher
 ```
 
-Run one polling cycle manually:
+Run one polling cycle:
 
 ```bash
 docker compose run --rm quota-watcher python /app/watcher.py --once
 ```
 
+## Defaults
+
+```env
+POLL_INTERVAL=300
+NOTICE_THRESHOLD=50
+LOW_THRESHOLD=20
+CRITICAL_THRESHOLD=10
+NOTIFY_RECOVERY=true
+TZ_OFFSET_HOURS=8
+REQUEST_TIMEOUT=20
+```
+
+The watcher polls every 5 minutes by default.
+
+Reset reminder rules:
+
+```text
+All windows: 0 < time to reset <= 1 hour
+7-day windows: 1 hour < time to reset <= 1 day
+```
+
+A reminder is sent on the first poll after a window enters one of these ranges.
+
+## Files
+
+- `watcher.py`: quota polling, notifications, and state handling
+- `compose.yaml`: Docker Compose configuration
+- `.env.example`: environment variable example
+- `.gitignore`: excludes local secrets and runtime state
+- `README.md`: Chinese README
+
 ## Security
 
-Do not commit any of the following:
+Do not commit:
 
 - `.env`
 - Bark device keys
-- CLIProxyAPI management passwords
+- CLIProxyAPI management keys or passwords
 - CLIProxyAPI auth files
 - `data/state.json`
 
-The provided `.gitignore` excludes the local `.env` and runtime state directory.
+The included `.gitignore` excludes `.env` and `data/`.
 
-## Notes
+## How it works
 
-The watcher calls upstream quota endpoints through CLIProxyAPI's Management API, so it does not need direct access to Claude or Antigravity credential files.
+The watcher calls upstream quota endpoints through the CLIProxyAPI Management API. It does not need direct access to Claude or Antigravity account credential files.
