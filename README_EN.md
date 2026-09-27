@@ -10,8 +10,9 @@ A small Dockerized watcher for [CLIProxyAPI](https://github.com/router-for-me/CL
 - Sends Bark alerts when remaining quota crosses 50%, 20%, 10%, or 0%.
 - Deduplicates alerts within the same severity band.
 - Sends a recovery notification when quota resets or returns to a healthier band.
-- Sends one reset reminder per quota window when the current reset is within 1 hour, regardless of the remaining percentage.
-- Persists the reset reminder marker so restarting the watcher does not resend the same reset-cycle notification.
+- Sends one reset reminder for every quota window when its reset is within 1 hour, regardless of the remaining percentage.
+- Sends an additional reminder for 7-day windows when the reset is within 1 day but still more than 1 hour away.
+- Persists separate 1-day and 1-hour reminder markers so restarting the watcher does not resend the same stage in the same reset cycle.
 - Persists state in `data/state.json`.
 
 Example alert:
@@ -26,7 +27,7 @@ Example alert:
 Reset reminder:
 
 ```text
-⏰ CPA · Gemini · 5h 94% · 1小时内重置
+⏰ CPA · Gemini · 5h 重置提醒
 
 5h：94% | 07分 | 09/28 04:16
 ```
