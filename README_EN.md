@@ -15,6 +15,8 @@ Monitor Claude and Antigravity quotas in CLIProxyAPI and send alerts through Bar
 - Sends one reset reminder for every quota window within 1 hour of reset.
 - Sends an extra reset reminder for 7-day windows within 1 day of reset.
 - Keeps the 1-day and 1-hour reminders separate, so restarting the watcher does not resend the same reminder.
+- Reset reminder bodies include every window in the same quota group.
+- Recovery is shown in the title; the body keeps showing the current percentage.
 - Stores state in `data/state.json`.
 
 ## Notification examples
@@ -34,6 +36,7 @@ Reset reminder:
 ⏰ CPA · Gemini · 5h 重置提醒
 
 5h：94% | 07分 | 09/28 04:16
+7d：95% | 03天 | 10/01 13:59
 ```
 
 Recovery:
@@ -42,7 +45,7 @@ Recovery:
 ✅ CPA · Claude · 7d 已恢复
 
 5h：83% | 02时 | 09/28 05:59
-7d：已恢复 | 03天 | 10/01 13:59
+7d：100% | 03天 | 10/01 13:59
 ```
 
 ## Time format
