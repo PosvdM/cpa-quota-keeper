@@ -554,22 +554,18 @@ def build_notification(group, changes):
         level = "active"
 
     lines = []
-    recovered_ids = {c["id"] for c in recovering}
     for index, window in enumerate(group["windows"]):
-        lines.extend(
-            format_window_lines(
-                window,
-                recovered=window["id"] in recovered_ids,
-                index=index,
-            )
-        )
+        lines.extend(format_window_lines(window, index=index))
     return title, "\n".join(lines), level
 
 
 def build_reset_notification(group, reminders):
     labels = " / ".join(short_window_label(item["label"]) for item in reminders)
     title = f"⏰ CPA · {group['label']} · {labels} 重置提醒"
-    body = "\n".join(format_window_lines(item)[0] for item in reminders)
+    body = "\n".join(
+        format_window_lines(window, index=index)[0]
+        for index, window in enumerate(group["windows"])
+    )
     return title, body, "active"
 
 
