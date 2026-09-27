@@ -1,0 +1,31 @@
+services:
+  quota-watcher:
+    image: python:3.12-alpine
+    container_name: cpa-quota-watcher
+    restart: unless-stopped
+    command: ["python", "/app/watcher.py"]
+    env_file:
+      - .env
+      - /opt/cliproxyapi/watcher.env
+    environment:
+      CPA_BASE_URL: http://cliproxyapi:8317/v0/management
+      CPA_CONFIG_FILE: /run/cliproxyapi/config.yaml
+      STATE_FILE: /data/state.json
+    volumes:
+      - ./watcher.py:/app/watcher.py:ro
+      - ./data:/data
+      - /opt/cliproxyapi/config.yaml:/run/cliproxyapi/config.yaml:ro
+    networks:
+      - cpa
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  cpa:
+    external: true
+    name: cliproxyapi_default
