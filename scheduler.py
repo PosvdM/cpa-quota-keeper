@@ -468,7 +468,7 @@ def next_wakeup(accounts, state, next_poll_epoch):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="CPA quota watcher + quota-window scheduler")
+    parser = argparse.ArgumentParser(description="CPA Quota Keeper: quota monitor + Window Ignition scheduler")
     parser.add_argument("--once", action="store_true", help="只刷新一次额度，不发送点火请求")
     parser.add_argument("--show-schedule", action="store_true", help="刷新额度并打印下一次点火时间")
     args = parser.parse_args()
