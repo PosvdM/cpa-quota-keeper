@@ -1,4 +1,4 @@
-# CPA Quota Watcher
+# CPA Quota Keeper
 
 [中文](./README.md)
 
@@ -19,7 +19,7 @@ Monitor Codex, Claude, and Antigravity quotas in CLIProxyAPI, send Bark notifica
 - Pins every trigger to one exact `auth_index`; a failed trigger never falls back to another account.
 - Stores runtime state in `data/state.json`.
 
-## 5-hour window scheduling
+## Window Ignition
 
 By default, **07:00** is the daily anchor.
 
@@ -132,25 +132,25 @@ docker compose up -d
 Follow logs:
 
 ```bash
-docker logs -f cpa-quota-watcher
+docker logs -f cpa-quota-keeper
 ```
 
 Refresh quotas once without sending trigger requests:
 
 ```bash
-docker compose run --rm quota-watcher python /app/scheduler.py --once
+docker compose run --rm quota-keeper python /app/scheduler.py --once
 ```
 
 Show the next trigger for every account:
 
 ```bash
-docker compose run --rm quota-watcher python /app/scheduler.py --show-schedule
+docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
 ```
 
 Run scheduler tests:
 
 ```bash
-docker compose run --rm quota-watcher python /app/test_scheduler.py
+docker compose run --rm quota-keeper python /app/test_scheduler.py
 ```
 
 ## Defaults
@@ -194,7 +194,7 @@ Do not commit:
 - CLIProxyAPI auth files
 - `data/state.json`
 
-The watcher does not directly read account credential files. Quota reads and trigger calls go through the CLIProxyAPI Management API, where CPA replaces `$TOKEN$` for the selected `auth_index` server-side.
+The keeper does not directly read account credential files. Quota reads and trigger calls go through the CLIProxyAPI Management API, where CPA replaces `$TOKEN$` for the selected `auth_index` server-side.
 
 ## Multiple accounts
 
