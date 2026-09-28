@@ -1,0 +1,43 @@
+# CPA Quota Keeper
+#
+# Monitoring and Window Ignition are separate:
+# - monitor = true: read quota and send notifications
+# - ignite = true: start the next 5-hour window after reset
+
+[window_ignition]
+enabled = true
+start_hour = 7
+end_hour = 22
+end_grace_minutes = 30
+grace_seconds = 3
+failure_retry_seconds = 300
+post_success_hold_seconds = 60
+
+[providers.codex]
+monitor = true
+ignite = true
+model = ""
+
+[providers.claude]
+monitor = true
+ignite = true
+model = ""
+
+[providers.antigravity]
+monitor = true
+ignite = false
+model = ""
+
+# Antigravity can expose more than one independent 5-hour quota group.
+# Leave groups unset to ignite every 5-hour group when ignite = true.
+# groups = ["Gemini"]
+#
+# Optional per-group model overrides:
+# [providers.antigravity.models]
+# "Gemini" = "gemini-3.5-flash-lite"
+# "Claude / GPT" = "gpt-oss-120b-medium"
+
+[providers.grok]
+monitor = true
+ignite = false
+model = ""
