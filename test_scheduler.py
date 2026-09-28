@@ -218,6 +218,33 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(client.calls[0][0:3], ("auth-X", "POST", scheduler.XAI_CLI_RESPONSES_URL))
 
 
+    def test_reset_reminder_can_be_disabled(self):
+        state = {"groups": {}}
+        group = {
+            "key": "test:reset-disabled",
+            "label": "Test",
+            "windows": [
+                {
+                    "id": "five-hour",
+                    "label": "5 小时",
+                    "remaining": 100.0,
+                    "reset": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+                }
+            ],
+        }
+        old_flag = watcher.NOTIFY_RESET_REMINDERS
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.NOTIFY_RESET_REMINDERS = False
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            watcher.process_group(state, group)
+        finally:
+            watcher.NOTIFY_RESET_REMINDERS = old_flag
+            watcher.send_bark = old_send
+        self.assertEqual(sent, [])
+
+
 if __name__ == "__main__":
     unittest.main()
 
