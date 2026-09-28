@@ -3,6 +3,7 @@ import argparse
 import copy
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -24,7 +25,6 @@ IGNITE_FAILURE_RETRY_SECONDS = max(60, int(os.getenv("IGNITE_FAILURE_RETRY_SECON
 IGNITE_POST_SUCCESS_HOLD_SECONDS = max(15, int(os.getenv("IGNITE_POST_SUCCESS_HOLD_SECONDS", "60")))
 IGNITE_CODEX_MODEL = os.getenv("IGNITE_CODEX_MODEL", "").strip()
 IGNITE_CLAUDE_MODEL = os.getenv("IGNITE_CLAUDE_MODEL", "").strip()
-ACCOUNT_LABELS_JSON = os.getenv("ACCOUNT_LABELS_JSON", "").strip()
 
 TRIGGER_PROMPT = (
     "This is an automated quota-window trigger. "
@@ -170,30 +170,33 @@ def provider_title(provider):
     )
 
 
-def account_labels():
-    if not ACCOUNT_LABELS_JSON:
-        return {}
-    try:
-        parsed = json.loads(ACCOUNT_LABELS_JSON)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"ACCOUNT_LABELS_JSON 不是合法 JSON: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise RuntimeError("ACCOUNT_LABELS_JSON 必须是 JSON object")
-    return {str(k): str(v).strip() for k, v in parsed.items() if str(v).strip()}
+def credential_email(file):
+    for key in ("email", "account"):
+        value = str(file.get(key) or "").strip()
+        if "@" in value:
+            return value
+
+    name = str(file.get("name") or "")
+    match = re.search(r"([A-Za-z0-9._%+]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})", name)
+    return match.group(1) if match else None
 
 
-ACCOUNT_LABELS = account_labels()
+def masked_account_id(file, ordinal):
+    email = credential_email(file)
+    if not email:
+        return str(ordinal)
+    local = email.split("@", 1)[0]
+    if len(local) >= 4:
+        return f"{local[:2]}~{local[-2:]}"
+    if len(local) >= 2:
+        return f"{local[0]}~{local[-1]}"
+    return local or str(ordinal)
 
 
 def credential_label(file, ordinal, provider_count):
-    provider = watcher.provider_of(file)
-    idx = watcher.auth_index_of(file)
-    custom = ACCOUNT_LABELS.get(idx)
-    if custom:
-        return custom
-    base = provider_title(provider)
+    base = provider_title(watcher.provider_of(file))
     if provider_count > 1:
-        return f"{base}#{ordinal}"
+        return f"{base}#{masked_account_id(file, ordinal)}"
     return base
 
 
@@ -208,8 +211,12 @@ def decorate_groups(groups, file, ordinal, provider_count):
         if provider_count == 1:
             copied["legacy_key"] = group["key"]
         base_label = str(group.get("label") or provider_title(provider))
-        copied["label"] = cred_label if provider == "codex" else (
-            f"{base_label}#{ordinal}" if provider_count > 1 else base_label
+        if provider == "codex":
+            base_label = provider_title(provider)
+        copied["label"] = (
+            f"{base_label}#{masked_account_id(file, ordinal)}"
+            if provider_count > 1
+            else base_label
         )
         copied["credential_id"] = f"{provider}:{idx}"
         out.append(copied)
