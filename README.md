@@ -1,4 +1,4 @@
-# CPA Quota Watcher
+# CPA Quota Keeper
 
 [English](./README_EN.md)
 
@@ -19,7 +19,7 @@
 - 点火请求明确绑定单个 `auth_index`，失败不会切到另一个账号。
 - 状态保存在 `data/state.json`，重启后继续使用。
 
-## 5 小时窗口调度
+## Window Ignition（窗口点火）
 
 默认每天 **07:00** 是锚点。
 
@@ -45,7 +45,7 @@ Codex #1 → 12:03:21 → 17:03:24 → 22:03:27
 Codex #2 → 12:18:05 → 17:18:08 → 22:18:11
 ```
 
-如果某个账号当天已经被正常使用过，watcher 会沿用它当前真实的窗口，而不是强行重新对齐。
+如果某个账号当天已经被正常使用过，keeper 会沿用它当前真实的窗口，而不是强行重新对齐。
 
 默认在 22:00 后保留 30 分钟漂移范围。落在夜间的下一次 reset 不会继续点火，而是等到第二天 07:00。
 
@@ -164,25 +164,25 @@ docker compose up -d
 查看日志：
 
 ```bash
-docker logs -f cpa-quota-watcher
+docker logs -f cpa-quota-keeper
 ```
 
 只刷新一次额度，不发送点火请求：
 
 ```bash
-docker compose run --rm quota-watcher python /app/scheduler.py --once
+docker compose run --rm quota-keeper python /app/scheduler.py --once
 ```
 
 查看当前每个账号的下一次点火时间：
 
 ```bash
-docker compose run --rm quota-watcher python /app/scheduler.py --show-schedule
+docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
 ```
 
 运行测试：
 
 ```bash
-docker compose run --rm quota-watcher python /app/test_scheduler.py
+docker compose run --rm quota-keeper python /app/test_scheduler.py
 ```
 
 ## 默认参数
@@ -226,11 +226,11 @@ IGNITE_POST_SUCCESS_HOLD_SECONDS=60
 - CLIProxyAPI auth 文件
 - `data/state.json`
 
-watcher 不直接读取账号凭证文件。额度查询和点火都通过 CLIProxyAPI Management API 完成，`$TOKEN$` 由 CPA 根据指定 `auth_index` 在服务端替换。
+keeper 不直接读取账号凭证文件。额度查询和点火都通过 CLIProxyAPI Management API 完成，`$TOKEN$` 由 CPA 根据指定 `auth_index` 在服务端替换。
 
 ## 多账号
 
-不需要把账号数量写死。新增 Codex 或 Claude OAuth credential 后，watcher 会自动发现并分别调度。
+不需要把账号数量写死。新增 Codex 或 Claude OAuth credential 后，keeper 会自动发现并分别调度。
 
 例如以后有三个 Codex：
 
