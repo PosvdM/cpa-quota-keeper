@@ -72,19 +72,29 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(title, "⚠️ Claude · 7d 48%")
         self.assertNotIn("CPA", title)
 
-    def test_custom_chatgpt_account_labels(self):
-        old = scheduler.ACCOUNT_LABELS
-        try:
-            scheduler.ACCOUNT_LABELS = {
-                "auth-A": "ChatGPT#u1~xx",
-                "auth-B": "ChatGPT#u4~xx",
-            }
-            a = {"provider": "codex", "auth_index": "auth-A"}
-            b = {"provider": "codex", "auth_index": "auth-B"}
-            self.assertEqual(scheduler.credential_label(a, 1, 2), "ChatGPT#u1~xx")
-            self.assertEqual(scheduler.credential_label(b, 2, 2), "ChatGPT#u4~xx")
-        finally:
-            scheduler.ACCOUNT_LABELS = old
+    def test_chatgpt_account_labels_are_generated_from_email(self):
+        a = {
+            "provider": "codex",
+            "auth_index": "auth-A",
+            "email": "user05@example.com",
+            "name": "codex-33a4fef5-user05@example.com-plus.json",
+        }
+        b = {
+            "provider": "codex",
+            "auth_index": "auth-B",
+            "email": "user04@example.com",
+            "name": "user03@example.com-team.json",
+        }
+        self.assertEqual(scheduler.credential_label(a, 1, 2), "ChatGPT#u5~xx")
+        self.assertEqual(scheduler.credential_label(b, 2, 2), "ChatGPT#u4~xx")
+
+    def test_single_account_provider_has_no_suffix(self):
+        a = {
+            "provider": "claude",
+            "auth_index": "auth-C",
+            "email": "redacted.user@example.com",
+        }
+        self.assertEqual(scheduler.credential_label(a, 1, 1), "Claude")
 
     def test_legacy_state_is_merged_before_processing(self):
         state = {
