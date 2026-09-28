@@ -2,252 +2,200 @@
 
 [中文](./README.md)
 
-CPA Quota Keeper adds quota monitoring and automatic window triggering to CLIProxyAPI.
+CPA Quota Keeper monitors quotas and triggers usage windows for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (CPA). It does two things:
 
-It reads Codex, Claude, and Antigravity quota data, sends Bark alerts, and can start the next Codex or Claude 5-hour quota window with a minimal request.
+1. Reads the remaining quota of Codex, Claude, and Antigravity accounts on a schedule, and sends [Bark](https://github.com/Finb/Bark) notifications when a quota drops, is about to reset, or has recovered.
+2. After a Codex / Claude 5-hour quota resets, sends a minimal request to that account so the next 5-hour window starts right away.
 
-## What it supports
+## Supported quotas
 
-- Codex 5-hour and 7-day quotas
-- Claude 5-hour, 7-day, and Fable quotas
-- Antigravity Gemini and Claude / GPT quota groups
-- Multiple Codex and Claude accounts
-- Bark alerts for low quota, resets, and recovery
-- Automatic Codex / Claude 5-hour window triggering
+| Provider | Quota windows | Window Ignition |
+| --- | --- | --- |
+| Codex | 5 hours, 7 days | Yes |
+| Claude | 5 hours, 7 days, Fable | Yes |
+| Antigravity | Gemini, Claude / GPT quota groups | No, monitoring only |
 
-Default alert thresholds:
+Each provider can have multiple accounts. New accounts need no configuration changes.
 
-```text
-50% → alert
-20% → alert
-10% → alert
- 0% → alert
-```
+## Notifications
 
-Every quota window gets a reset reminder within 1 hour of reset. A 7-day window also gets a reminder within 1 day.
+Bark notifications are sent when:
 
-A recovery alert is sent when quota becomes healthy again.
+- Remaining quota drops to 50%, 20%, 10%, or 0% (thresholds are configurable)
+- Any quota window is 1 hour from reset
+- A 7-day window is 1 day from reset
+- A quota returns to normal after a reset
 
-## Window Ignition
-
-**07:00** is the daily starting point.
-
-After 07:00, Keeper does not use fixed 12:00, 17:00, and 22:00 trigger times. It follows the real `reset_at` reported for each account.
-
-```text
-07:00 trigger
-  ↓
-read reset_at
-  ↓
-trigger again at reset_at + 3 seconds
-  ↓
-read the new reset_at
-  ↓
-repeat
-```
-
-Each account therefore follows its own real quota window.
-
-If an account was already used earlier, Keeper keeps its current window instead of forcing it back onto a fixed schedule.
-
-The last daytime trigger may drift up to 30 minutes after 22:00 by default. Later resets are skipped until 07:00 the next day.
-
-### Trigger request
-
-Codex prefers an available Luna model. Claude prefers Haiku.
-
-The request only asks the model to reply with:
-
-```text
-OK
-```
-
-Tools are disabled, and reasoning is disabled or minimized where supported.
-
-Each trigger is pinned to the credential's exact `auth_index`. If one account fails, Keeper retries that account only.
-
-The default retry delay is 5 minutes.
-
-Antigravity is monitored but is not used for Window Ignition.
-
-## Multiple accounts
-
-If a provider has only one account, Keeper shows only the provider name:
-
-```text
-Gemini
-Claude
-ChatGPT
-```
-
-If a provider has multiple accounts, Keeper reads the account email from the credential and masks the email local-part with its first two and last two characters.
-
-For example:
-
-```text
-alice.work@example.com → ChatGPT#al~rk
-bob.team@example.net   → ChatGPT#bo~am
-```
-
-The label is only used in notifications and logs. Routing still uses the exact `auth_index`.
-
-New accounts are detected automatically.
-
-## Notification examples
-
-Quota alert:
+Notifications are in Chinese. Examples:
 
 ```text
 ⚠️ Claude · 7d 48%
 
-5h：96% | 04h | 09/28 13:50
-7d：48% | 03d | 10/01 14:00
+5h：96% | 04时 | 09/28 13:50
+7d：48% | 03天 | 10/01 14:00
 ```
-
-Reset reminder:
 
 ```text
-⏰ ChatGPT#bo~am · 5h reset reminder
+⏰ ChatGPT#bo~am · 5h 重置提醒
 
-5h：19% | 01h | 09/28 13:55
-7d：81% | 06d | 10/04 21:27
+5h：19% | 01时 | 09/28 13:55
+7d：81% | 06天 | 10/04 21:27
 ```
-
-Recovery:
 
 ```text
-✅ Claude · 7d recovered
+✅ Claude · 7d 已恢复
 
-5h：96% | 04h | 09/28 13:50
-7d：100% | 03d | 10/01 14:00
+5h：96% | 04时 | 09/28 13:50
+7d：100% | 03天 | 10/01 14:00
 ```
 
-## Setup
+Each line shows the window, remaining quota, time until reset (`时` = hours, `天` = days), and reset time. `重置提醒` means reset reminder; `已恢复` means recovered.
 
-Copy the example environment file:
+## Window Ignition
+
+A 5-hour window starts counting at the first request. If you start using an account long after its quota resets, that time is lost. Keeper sends a request right after each reset so the windows run back to back.
+
+Schedule:
+
+```text
+07:00 first trigger
+  ↓
+read the account's reset_at
+  ↓
+trigger again at reset_at + 3 seconds
+  ↓
+read the new reset_at, repeat
+```
+
+- Each account follows its own `reset_at`. If an account is already in use, Keeper keeps its current window and does not force it back to 07:00.
+- The last trigger of the day happens no later than 22:30 (`IGNITE_END_HOUR` + `IGNITE_END_GRACE_MINUTES`). Later resets are not triggered; the account waits until 07:00 the next day.
+- The trigger request only asks the model to reply `OK` and includes no tools. Codex requests disable reasoning; Claude requests allow at most 4 output tokens.
+- Codex uses Luna and Claude uses Haiku by default. Set `IGNITE_CODEX_MODEL` / `IGNITE_CLAUDE_MODEL` to choose other models.
+- Each request is bound to one account through `auth_index`. On failure, Keeper retries the same account after 5 minutes and never switches to another account.
+
+## Deployment
+
+### Requirements
+
+- CPA running in Docker with the Management API enabled
+- A Bark device key
+
+Default assumptions:
+
+| Item | Default |
+| --- | --- |
+| Management API | `http://cliproxyapi:8317/v0/management` |
+| Docker network | `cliproxyapi_default` |
+| CPA config file | `/opt/cliproxyapi/config.yaml` |
+
+If your setup differs, edit `compose.yaml`.
+
+### 1. Create the config
 
 ```bash
 cp .env.example .env
 ```
 
-Set Bark:
+Set the Bark URL:
 
 ```env
 BARK_URL=https://api.day.app/your_device_key
 BARK_GROUP=CPA
 ```
 
-Then provide the CLIProxyAPI Management API key.
+### 2. Provide the management key
 
-You can put it in `.env`:
+Keeper looks for the key in this order and uses the first one found:
 
-```env
-CPA_MANAGEMENT_KEY=your_management_key
-```
+1. `CPA_MANAGEMENT_KEY` in `.env`
+2. `MANAGEMENT_PASSWORD` in `/opt/cliproxyapi/watcher.env`
+3. The plain-text value of `remote-management.secret-key` in CPA's `config.yaml`
 
-Or use:
+If CPA has already replaced `secret-key` in `config.yaml` with a bcrypt hash, use one of the first two options.
 
-```text
-/opt/cliproxyapi/watcher.env
-```
+By default, `compose.yaml` loads `/opt/cliproxyapi/watcher.env` and mounts `/opt/cliproxyapi/config.yaml`. `docker compose` fails if either file is missing, so remove the matching lines from `compose.yaml` if you don't use them.
 
-with:
-
-```env
-MANAGEMENT_PASSWORD=your_management_password
-```
-
-Use either method.
-
-The default Docker setup expects:
-
-```text
-CLIProxyAPI container: cliproxyapi
-Management API: http://cliproxyapi:8317/v0/management
-Docker network: cliproxyapi_default
-```
-
-If your setup is different, edit `compose.yaml` and `.env`.
-
-Start the service:
+### 3. Start
 
 ```bash
 docker compose up -d
-```
-
-Follow logs:
-
-```bash
 docker logs -f cpa-quota-keeper
 ```
 
-## Common commands
-
-Refresh quota once without triggering a new window:
+## Commands
 
 ```bash
+# Refresh quotas and send notifications once, without triggering
 docker compose run --rm quota-keeper python /app/scheduler.py --once
-```
 
-Show the next trigger time for each account:
-
-```bash
+# Show the next trigger time for each account
 docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
-```
 
-Run tests:
-
-```bash
+# Run tests
 docker compose run --rm quota-keeper python /app/test_scheduler.py
 ```
 
-## Default settings
+## Configuration
 
-```env
-POLL_INTERVAL=300
-NOTICE_THRESHOLD=50
-LOW_THRESHOLD=20
-CRITICAL_THRESHOLD=10
-NOTIFY_RECOVERY=true
+All settings go in `.env`.
 
-TZ_OFFSET_HOURS=8
-REQUEST_TIMEOUT=20
+### Notifications
 
-IGNITE_ENABLED=true
-IGNITE_START_HOUR=7
-IGNITE_END_HOUR=22
-IGNITE_END_GRACE_MINUTES=30
-IGNITE_GRACE_SECONDS=3
-IGNITE_FAILURE_RETRY_SECONDS=300
-IGNITE_POST_SUCCESS_HOLD_SECONDS=60
+| Variable | Default | Description |
+| --- | --- | --- |
+| `BARK_URL` | empty | Bark push URL; no notifications are sent when empty |
+| `BARK_GROUP` | `CPA` | Bark notification group |
+| `BARK_ICON` | CPA logo | Notification icon |
+| `POLL_INTERVAL` | `300` | Quota refresh interval in seconds, minimum 60 |
+| `NOTICE_THRESHOLD` | `50` | First alert threshold (%) |
+| `LOW_THRESHOLD` | `20` | Second alert threshold (%) |
+| `CRITICAL_THRESHOLD` | `10` | Third alert threshold (%) |
+| `NOTIFY_RECOVERY` | `true` | Notify when a quota recovers |
+| `TZ_OFFSET_HOURS` | `8` | Time zone (UTC offset) for displayed times and trigger hours |
+| `REQUEST_TIMEOUT` | `20` | HTTP request timeout in seconds |
 
-IGNITE_CODEX_MODEL=
-IGNITE_CLAUDE_MODEL=
+`POLL_INTERVAL` only affects quota refresh and notifications. Trigger times come from `reset_at` and do not depend on the polling rate.
+
+### Window Ignition
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `IGNITE_ENABLED` | `true` | Enable Window Ignition |
+| `IGNITE_START_HOUR` | `7` | Hour of the first trigger each day |
+| `IGNITE_END_HOUR` | `22` | Hour after which triggering stops |
+| `IGNITE_END_GRACE_MINUTES` | `30` | Extra minutes allowed after `IGNITE_END_HOUR` |
+| `IGNITE_GRACE_SECONDS` | `3` | Seconds to wait after `reset_at` before triggering |
+| `IGNITE_FAILURE_RETRY_SECONDS` | `300` | Retry delay after a failure in seconds, minimum 60 |
+| `IGNITE_POST_SUCCESS_HOLD_SECONDS` | `60` | Seconds after a success during which no new trigger is sent, minimum 15 |
+| `IGNITE_CODEX_MODEL` | empty | Codex trigger model; Luna is chosen when empty |
+| `IGNITE_CLAUDE_MODEL` | empty | Claude trigger model; Haiku is chosen when empty |
+
+## Account names
+
+When a provider has one account, notifications show only the provider name, such as `Claude`, `ChatGPT`, or `Gemini`.
+
+With multiple accounts, Keeper adds a suffix made of the first 2 and last 2 characters of the email username:
+
+```text
+alice.work@example.com → ChatGPT#al~rk
+bob.team@example.net   → ChatGPT#bo~am
 ```
 
-`POLL_INTERVAL` only controls quota refreshes and Bark alerts.
-
-Window Ignition schedules the next trigger from `reset_at`, so it does not need frequent quota polling.
+These names are only used in notifications and logs. Scheduling and requests still identify accounts by `auth_index`.
 
 ## Files
 
-- `watcher.py`: reads quota data, builds notifications, and stores notification state
-- `scheduler.py`: multi-account scheduling and Window Ignition
-- `test_scheduler.py`: tests
-- `compose.yaml`: Docker Compose configuration
-- `.env.example`: configuration example
-- `data/state.json`: runtime state
+| File | Purpose |
+| --- | --- |
+| `watcher.py` | Reads quotas, builds and sends notifications |
+| `scheduler.py` | Main program: multi-account scheduling and Window Ignition |
+| `test_scheduler.py` | Tests |
+| `compose.yaml` | Docker Compose config |
+| `.env.example` | Example config |
+| `data/state.json` | Runtime state (created automatically) |
 
 ## Security
 
-Do not commit:
-
-- `.env`
-- Bark device keys
-- CLIProxyAPI management keys or passwords
-- CLIProxyAPI auth files
-- `data/state.json`
-
-Keeper does not read account credential files directly.
-
-Quota checks and trigger requests go through the CLIProxyAPI Management API. CPA uses the credential selected by `auth_index`.
+- Keeper does not read credential files from disk. Quota queries and triggers go through the CPA Management API, and CPA uses the credential for the given `auth_index` on the server side. If an Antigravity credential lacks `project_id`, Keeper downloads that credential file through the Management API to read it.
+- The container runs with a read-only file system and all Linux capabilities dropped.
+- Do not commit `.env`, your Bark device key, the management key, CPA credential files, or `data/state.json`. `.gitignore` already excludes `.env` and `data/`.
