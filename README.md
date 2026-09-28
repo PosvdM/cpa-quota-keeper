@@ -41,8 +41,8 @@ reset_at + 3 秒点火
 
 ```text
 Claude   → 12:00:04 → 17:00:07 → 22:00:10
-Codex #1 → 12:03:21 → 17:03:24 → 22:03:27
-Codex #2 → 12:18:05 → 17:18:08 → 22:18:11
+ChatGPT#u1~xx → 12:03:21 → 17:03:24 → 22:03:27
+ChatGPT#u4~xx → 12:18:05 → 17:18:08 → 22:18:11
 ```
 
 如果某个账号当天已经被正常使用过，keeper 会沿用它当前真实的窗口，而不是强行重新对齐。
@@ -56,12 +56,12 @@ Codex #2 → 12:18:05 → 17:18:08 → 22:18:11
 因此：
 
 ```text
-Codex #1 点火失败
+ChatGPT#u1~xx 点火失败
         ↓
-只记录 Codex #1 失败并稍后重试
+只记录 ChatGPT#u1~xx 失败并稍后重试
 
 不会：
-Codex #1 → Codex #2
+ChatGPT#u1~xx → Codex #2
 ```
 
 默认失败后 5 分钟只重试同一个 credential。
@@ -88,21 +88,21 @@ Antigravity 目前只监控额度，不参与窗口点火。
 ## 通知示例
 
 ```text
-⚠️ CPA · Claude · 7d 48%
+⚠️ Claude · 7d 48%
 
 5h：83% | 02时 | 09/28 05:59
 7d：48% | 03天 | 10/01 13:59
 ```
 
 ```text
-⏰ CPA · Codex #2 · 5h 重置提醒
+⏰ ChatGPT#u4~xx · 5h 重置提醒
 
 5h：19% | 01时 | 09/28 13:55
 7d：81% | 06天 | 10/04 21:27
 ```
 
 ```text
-✅ CPA · Claude · 7d 已恢复
+✅ Claude · 7d 已恢复
 
 5h：96% | 04时 | 09/28 13:50
 7d：100% | 03天 | 10/01 13:59
@@ -229,6 +229,15 @@ IGNITE_POST_SUCCESS_HOLD_SECONDS=60
 keeper 不直接读取账号凭证文件。额度查询和点火都通过 CLIProxyAPI Management API 完成，`$TOKEN$` 由 CPA 根据指定 `auth_index` 在服务端替换。
 
 ## 多账号
+
+单账号 provider（例如只有一个 Gemini、一个 Claude）直接显示 provider 名，不额外加账号后缀。多个同类账号可以通过 `ACCOUNT_LABELS_JSON` 配置稳定别名：
+
+```env
+ACCOUNT_LABELS_JSON={"auth_index_1":"ChatGPT#main","auth_index_2":"ChatGPT#team"}
+```
+
+别名只用于显示和日志，不改变路由；实际点火仍按对应 `auth_index` 精确绑定。
+
 
 不需要把账号数量写死。新增 Codex 或 Claude OAuth credential 后，keeper 会自动发现并分别调度。
 
