@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import copy
 import json
 import os
 import sys
@@ -23,6 +24,7 @@ IGNITE_FAILURE_RETRY_SECONDS = max(60, int(os.getenv("IGNITE_FAILURE_RETRY_SECON
 IGNITE_POST_SUCCESS_HOLD_SECONDS = max(15, int(os.getenv("IGNITE_POST_SUCCESS_HOLD_SECONDS", "60")))
 IGNITE_CODEX_MODEL = os.getenv("IGNITE_CODEX_MODEL", "").strip()
 IGNITE_CLAUDE_MODEL = os.getenv("IGNITE_CLAUDE_MODEL", "").strip()
+ACCOUNT_LABELS_JSON = os.getenv("ACCOUNT_LABELS_JSON", "").strip()
 
 TRIGGER_PROMPT = (
     "This is an automated quota-window trigger. "
@@ -163,21 +165,52 @@ def fetch_codex_groups(client, file):
 
 
 def provider_title(provider):
-    return {"codex": "Codex", "claude": "Claude", "antigravity": "Antigravity"}.get(
+    return {"codex": "ChatGPT", "claude": "Claude", "antigravity": "Antigravity"}.get(
         provider, provider.title()
     )
+
+
+def account_labels():
+    if not ACCOUNT_LABELS_JSON:
+        return {}
+    try:
+        parsed = json.loads(ACCOUNT_LABELS_JSON)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"ACCOUNT_LABELS_JSON 不是合法 JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("ACCOUNT_LABELS_JSON 必须是 JSON object")
+    return {str(k): str(v).strip() for k, v in parsed.items() if str(v).strip()}
+
+
+ACCOUNT_LABELS = account_labels()
+
+
+def credential_label(file, ordinal, provider_count):
+    provider = watcher.provider_of(file)
+    idx = watcher.auth_index_of(file)
+    custom = ACCOUNT_LABELS.get(idx)
+    if custom:
+        return custom
+    base = provider_title(provider)
+    if provider_count > 1:
+        return f"{base}#{ordinal}"
+    return base
 
 
 def decorate_groups(groups, file, ordinal, provider_count):
     provider = watcher.provider_of(file)
     idx = watcher.auth_index_of(file)
-    account_suffix = f" #{ordinal}" if provider_count > 1 else ""
+    cred_label = credential_label(file, ordinal, provider_count)
     out = []
     for group in groups:
         copied = dict(group)
         copied["key"] = f"{provider}:{idx}:{group['key']}"
+        if provider_count == 1:
+            copied["legacy_key"] = group["key"]
         base_label = str(group.get("label") or provider_title(provider))
-        copied["label"] = f"{base_label}{account_suffix}"
+        copied["label"] = cred_label if provider == "codex" else (
+            f"{base_label}#{ordinal}" if provider_count > 1 else base_label
+        )
         copied["credential_id"] = f"{provider}:{idx}"
         out.append(copied)
     return out
@@ -226,14 +259,14 @@ def collect(client):
                         {
                             "id": credential_id(file),
                             "provider": provider,
-                            "label": f"{provider_title(provider)}{f' #{ordinal}' if counts[provider] > 1 else ''}",
+                            "label": credential_label(file, ordinal, counts[provider]),
                             "file": file,
                             "remaining": window.get("remaining"),
                             "reset": window.get("reset"),
                         }
                     )
         except Exception as exc:
-            errors.append(f"{provider_title(provider)}{f' #{ordinal}' if counts[provider] > 1 else ''}: {exc}")
+            errors.append(f"{credential_label(file, ordinal, counts[provider])}: {exc}")
     return groups, accounts, errors
 
 
@@ -405,6 +438,27 @@ def schedule_summary(accounts, state):
 
 
 def process_groups(state, groups):
+    groups_state = state.setdefault("groups", {})
+    for group in groups:
+        legacy_key = group.get("legacy_key")
+        new_key = group["key"]
+        if not legacy_key or legacy_key == new_key or legacy_key not in groups_state:
+            continue
+        old = groups_state[legacy_key]
+        if new_key not in groups_state:
+            groups_state[new_key] = copy.deepcopy(old)
+            watcher.log(f"迁移旧通知状态：{legacy_key} → {new_key}")
+        else:
+            current = groups_state[new_key]
+            old_windows = old.get("windows", {}) if isinstance(old, dict) else {}
+            current_windows = current.setdefault("windows", {}) if isinstance(current, dict) else {}
+            for wid, old_window in old_windows.items():
+                current_window = current_windows.setdefault(wid, {})
+                if isinstance(old_window, dict) and isinstance(current_window, dict):
+                    for key, value in old_window.items():
+                        current_window.setdefault(key, value)
+        groups_state.pop(legacy_key, None)
+
     if groups:
         watcher.log(watcher.summary(groups))
     for group in groups:
