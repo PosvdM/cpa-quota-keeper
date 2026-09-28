@@ -28,6 +28,7 @@ REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "20"))
 NOTIFY_RECOVERY = os.getenv("NOTIFY_RECOVERY", "true").lower() not in {"0", "false", "no", "off"}
 TZ_OFFSET_HOURS = float(os.getenv("TZ_OFFSET_HOURS", "8"))
 LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET_HOURS))
+RESET_ID_TOLERANCE_SECONDS = 600
 
 ANTIGRAVITY_URLS = [
     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
@@ -236,6 +237,18 @@ def parse_time(value):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def same_reset_cycle(left, right):
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    left_dt = parse_time(left)
+    right_dt = parse_time(right)
+    if not left_dt or not right_dt:
+        return False
+    return abs((left_dt - right_dt).total_seconds()) <= RESET_ID_TOLERANCE_SECONDS
 
 
 def format_duration(seconds):
@@ -641,8 +654,8 @@ def process_group(state, group):
         if reset_dt and reset_value:
             seconds_until_reset = (reset_dt - now).total_seconds()
             one_hour_notified = (
-                old.get("reset_notice_1h_for") == reset_value
-                or old.get("reset_notice_for") == reset_value
+                same_reset_cycle(old.get("reset_notice_1h_for"), reset_value)
+                or same_reset_cycle(old.get("reset_notice_for"), reset_value)
             )
             if 0 < seconds_until_reset <= 3600 and not one_hour_notified:
                 reset_reminders.append({
@@ -655,7 +668,7 @@ def process_group(state, group):
             elif (
                 is_seven_day_window(window)
                 and 3600 < seconds_until_reset <= 86400
-                and old.get("reset_notice_1d_for") != reset_value
+                and not same_reset_cycle(old.get("reset_notice_1d_for"), reset_value)
             ):
                 reset_reminders.append({
                     "id": wid,
