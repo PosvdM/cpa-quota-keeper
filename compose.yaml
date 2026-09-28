@@ -1,7 +1,7 @@
 services:
-  quota-watcher:
+  quota-keeper:
     image: python:3.12-alpine
-    container_name: cpa-quota-watcher
+    container_name: cpa-quota-keeper
     restart: unless-stopped
     command: ["python", "/app/scheduler.py"]
     env_file:
