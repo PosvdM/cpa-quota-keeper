@@ -2,67 +2,79 @@
 
 [中文](./README.md)
 
-Monitor Claude and Antigravity quotas in CLIProxyAPI and send alerts through Bark.
+Monitor Codex, Claude, and Antigravity quotas in CLIProxyAPI, send Bark notifications, and optionally keep Codex / Claude 5-hour quota windows active.
 
 ## Features
 
-- Refreshes quota data directly instead of reading cached values from the management page.
+- Reads live upstream quota data instead of relying on management-page cache.
+- Supports multiple Codex and Claude credentials with separate state and reset times.
+- Supports Codex 5-hour and 7-day quotas.
 - Supports Claude 5-hour, 7-day, and Fable quotas.
 - Supports Antigravity Gemini and Claude / GPT quota groups.
-- Sends alerts when remaining quota crosses `50%`, `20%`, `10%`, or `0%`.
-- Does not repeat alerts while a quota stays in the same threshold range.
-- Sends one recovery alert when quota returns to a healthier range.
-- After a 1-hour reset reminder, the watcher also sends one recovery alert when that reset actually completes, even when both the old and new quota values are in the normal range.
-- Sends one reset reminder for every quota window within 1 hour of reset.
-- Sends an extra reset reminder for 7-day windows within 1 day of reset.
-- Keeps the 1-day and 1-hour reminders separate, so restarting the watcher does not resend the same reminder.
-- Treats reset times within 10 seconds of each other as the same cycle to avoid duplicate alerts.
-- Reset reminder bodies include every window in the same quota group.
-- Recovery is shown in the title; the body keeps showing the current percentage.
-- Stores state in `data/state.json`.
+- Sends Bark alerts when remaining quota crosses `50%`, `20%`, `10%`, or `0%`.
+- Sends one recovery alert when quota recovers.
+- Sends reset reminders within 1 hour for every window and within 1 day for 7-day windows.
+- Automatically starts the next Codex / Claude 5-hour window.
+- Auto-selects a low-usage model: Luna for Codex and Haiku for Claude when available.
+- Pins every trigger to one exact `auth_index`; a failed trigger never falls back to another account.
+- Stores runtime state in `data/state.json`.
 
-## Notification examples
+## 5-hour window scheduling
 
-Quota alert:
+By default, **07:00** is the daily anchor.
+
+After 07:00, the scheduler does not hard-code 12:00, 17:00, or 22:00. It follows the real `reset_at` reported for each credential:
 
 ```text
-⚠️ CPA · Claude · 7d 48%
-
-5h：83% | 02时 | 09/28 05:59
-7d：48% | 03天 | 10/01 13:59
+07:00 first trigger
+  ↓
+read real reset_at
+  ↓
+trigger at reset_at + 3 seconds
+  ↓
+read the new reset_at
+  ↓
+repeat
 ```
 
-Reset reminder:
+Different accounts can therefore drift independently:
 
 ```text
-⏰ CPA · Gemini · 5h 重置提醒
-
-5h：94% | 07分 | 09/28 04:16
-7d：95% | 03天 | 10/01 13:59
+Claude   → 12:00:04 → 17:00:07 → 22:00:10
+Codex #1 → 12:03:21 → 17:03:24 → 22:03:27
+Codex #2 → 12:18:05 → 17:18:08 → 22:18:11
 ```
 
-Recovery:
+If an account was already used earlier that day, its existing real window is preserved instead of being forced back onto a fixed clock.
+
+The default schedule allows 30 minutes of drift after 22:00. A reset that falls overnight is skipped, and that credential waits until 07:00 the next day.
+
+### No cross-account fallback
+
+Window triggers do not go through normal CPA `/v1` load balancing. The scheduler calls the Management API `api-call` endpoint with the exact credential `auth_index`.
+
+If Codex #1 fails, only Codex #1 is marked failed and retried later. The request is never rerouted to Codex #2.
+
+The default failure retry interval is 5 minutes.
+
+## Trigger requests
+
+Codex prefers an available Luna model. Claude prefers Haiku. You can override either model:
+
+```env
+IGNITE_CODEX_MODEL=
+IGNITE_CLAUDE_MODEL=
+```
+
+The trigger disables tools and unnecessary reasoning and asks for exactly:
 
 ```text
-✅ CPA · Claude · 7d 已恢复
-
-5h：83% | 02时 | 09/28 05:59
-7d：100% | 03天 | 10/01 13:59
+OK
 ```
 
-## Time format
+Claude also uses a very small output limit. The ChatGPT Codex backend does not accept `max_output_tokens`, so Codex output is constrained through the explicit instruction instead.
 
-Each line shows both a compact remaining time and the exact reset time:
-
-```text
-7d：48% | 03天 | 10/01 13:59
-```
-
-The compact value is rounded in the unit the remaining time currently falls into:
-
-- Under 1 hour: `59分`, `60分`
-- 1 hour to under 1 day: `02时`, `24时`
-- 1 day or more: `03天`, `04天`
+Antigravity is quota-monitoring only and is not used for window triggers.
 
 ## Setup
 
@@ -72,7 +84,7 @@ The compact value is rounded in the unit the remaining time currently falls into
 cp .env.example .env
 ```
 
-Set your Bark URL:
+Configure Bark:
 
 ```env
 BARK_URL=https://api.day.app/your_device_key
@@ -81,7 +93,7 @@ BARK_GROUP=CPA
 
 ### 2. Provide the CLIProxyAPI management key
 
-You can put it in `.env`:
+Put it in `.env`:
 
 ```env
 CPA_MANAGEMENT_KEY=your_management_key
@@ -93,40 +105,52 @@ The included `compose.yaml` also reads:
 /opt/cliproxyapi/watcher.env
 ```
 
-That file can contain:
+That file may contain:
 
 ```env
 MANAGEMENT_PASSWORD=your_management_password
 ```
 
-Use either method.
+Either method is enough.
 
 ### 3. Check the Docker network
 
-The included configuration assumes:
+The default configuration assumes:
 
 - the CLIProxyAPI container is named `cliproxyapi`
-- the Management API is available at `http://cliproxyapi:8317/v0/management`
-- the Docker network is named `cliproxyapi_default`
+- the Management API is `http://cliproxyapi:8317/v0/management`
+- the Docker network is `cliproxyapi_default`
 
-Change `compose.yaml` or `.env` if your setup is different.
+Change `compose.yaml` or `.env` if your setup differs.
 
-### 4. Start the watcher
+### 4. Start
 
 ```bash
 docker compose up -d
 ```
 
-View logs:
+Follow logs:
 
 ```bash
 docker logs -f cpa-quota-watcher
 ```
 
-Run one polling cycle:
+Refresh quotas once without sending trigger requests:
 
 ```bash
-docker compose run --rm quota-watcher python /app/watcher.py --once
+docker compose run --rm quota-watcher python /app/scheduler.py --once
+```
+
+Show the next trigger for every account:
+
+```bash
+docker compose run --rm quota-watcher python /app/scheduler.py --show-schedule
+```
+
+Run scheduler tests:
+
+```bash
+docker compose run --rm quota-watcher python /app/test_scheduler.py
 ```
 
 ## Defaults
@@ -139,25 +163,25 @@ CRITICAL_THRESHOLD=10
 NOTIFY_RECOVERY=true
 TZ_OFFSET_HOURS=8
 REQUEST_TIMEOUT=20
+
+IGNITE_ENABLED=true
+IGNITE_START_HOUR=7
+IGNITE_END_HOUR=22
+IGNITE_END_GRACE_MINUTES=30
+IGNITE_GRACE_SECONDS=3
+IGNITE_FAILURE_RETRY_SECONDS=300
+IGNITE_POST_SUCCESS_HOLD_SECONDS=60
 ```
 
-The watcher polls every 5 minutes by default.
-
-Reset reminder rules:
-
-```text
-All windows: 0 < time to reset <= 1 hour
-7-day windows: 1 hour < time to reset <= 1 day
-```
-
-A reminder is sent on the first poll after a window enters one of these ranges.
+`POLL_INTERVAL` only controls quota refreshes and Bark notifications. Trigger scheduling uses the real `reset_at` with a local timer, so there is no 10-second quota polling loop.
 
 ## Files
 
-- `watcher.py`: quota polling, notifications, and state handling
+- `watcher.py`: upstream quota helpers, Bark notifications, and existing state logic
+- `scheduler.py`: Codex / Claude multi-account quota collection and 5-hour window scheduling
+- `test_scheduler.py`: scheduling-boundary and exact-credential tests
 - `compose.yaml`: Docker Compose configuration
 - `.env.example`: environment variable example
-- `.gitignore`: excludes local secrets and runtime state
 - `README.md`: Chinese README
 
 ## Security
@@ -170,8 +194,18 @@ Do not commit:
 - CLIProxyAPI auth files
 - `data/state.json`
 
-The included `.gitignore` excludes `.env` and `data/`.
+The watcher does not directly read account credential files. Quota reads and trigger calls go through the CLIProxyAPI Management API, where CPA replaces `$TOKEN$` for the selected `auth_index` server-side.
 
-## How it works
+## Multiple accounts
 
-The watcher calls upstream quota endpoints through the CLIProxyAPI Management API. It does not need direct access to Claude or Antigravity account credential files.
+Account count is not hard-coded. New Codex or Claude OAuth credentials are discovered automatically and scheduled independently.
+
+For example, adding a third Codex credential produces three separate schedules:
+
+```text
+Codex #1
+Codex #2
+Codex #3
+```
+
+Each keeps its own quota state, `reset_at`, and next trigger time.
