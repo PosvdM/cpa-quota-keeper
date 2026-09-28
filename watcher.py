@@ -559,11 +559,11 @@ def build_notification(group, changes):
             for c in worsening
         )
         prefix = "🔴" if worst["to"] in {"critical", "exhausted"} else "⚠️"
-        title = f"{prefix} CPA · {group['label']} · {labels}"
+        title = f"{prefix} {group['label']} · {labels}"
         level = "timeSensitive" if worst["to"] in {"critical", "exhausted"} else "active"
     else:
         labels = " / ".join(short_window_label(c["label"]) for c in recovering)
-        title = f"✅ CPA · {group['label']} · {labels} 已恢复"
+        title = f"✅ {group['label']} · {labels} 已恢复"
         level = "active"
 
     lines = []
@@ -574,7 +574,7 @@ def build_notification(group, changes):
 
 def build_reset_notification(group, reminders):
     labels = " / ".join(short_window_label(item["label"]) for item in reminders)
-    title = f"⏰ CPA · {group['label']} · {labels} 重置提醒"
+    title = f"⏰ {group['label']} · {labels} 重置提醒"
     body = "\n".join(
         format_window_lines(window, index=index)[0]
         for index, window in enumerate(group["windows"])
