@@ -15,6 +15,7 @@ services:
       - ./watcher.py:/app/watcher.py:ro
       - ./scheduler.py:/app/scheduler.py:ro
       - ./test_scheduler.py:/app/test_scheduler.py:ro
+      - ./keeper.toml:/app/keeper.toml:ro
       - ./data:/data
       - /opt/cliproxyapi/config.yaml:/run/cliproxyapi/config.yaml:ro
     networks:
