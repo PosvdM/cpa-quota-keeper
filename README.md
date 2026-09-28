@@ -2,28 +2,90 @@
 
 [English](./README_EN.md)
 
-监控 CLIProxyAPI 中的 Claude / Antigravity 额度，并通过 Bark 发通知。
+监控 CLIProxyAPI 中的 Codex、Claude 和 Antigravity 额度，通过 Bark 发通知，并可自动维持 Codex / Claude 的 5 小时额度窗口。
 
 ## 功能
 
-- 主动刷新额度，不依赖管理页面里的缓存。
+- 主动读取上游额度，不依赖管理页面缓存。
+- 支持多个 Codex 和 Claude 凭证，每个账号独立记录额度与重置时间。
+- 支持 Codex 的 5 小时和 7 天额度。
 - 支持 Claude 的 5 小时、7 天和 Fable 额度。
 - 支持 Antigravity 的 Gemini、Claude / GPT 额度组。
-- 剩余额度跨过 `50%`、`20%`、`10%`、`0%` 时通知。
-- 同一阈值区间不会重复通知。
+- 剩余额度跨过 `50%`、`20%`、`10%`、`0%` 时通过 Bark 通知。
 - 额度恢复后通知一次。
-- 已发送 1 小时重置提醒的窗口在真正完成 reset 后也会通知一次；即使额度从 83% 变成 100% 前后都属于正常区间，也会发送“已恢复”。
-- 所有额度窗口在重置前 1 小时内通知一次。
-- 7 天窗口还会在重置前 1 天内通知一次。
-- 1 天提醒和 1 小时提醒分别去重，重启 watcher 也不会重复发送同一轮提醒。
-- 上游 reset 时间相差不超过 10 秒时，按同一轮重置处理，避免重复通知。
-- 重置提醒正文会显示同一额度组的全部窗口。
-- 恢复通知只在标题写“已恢复”，正文继续显示当前百分比。
-- 状态保存在 `data/state.json`。
+- 所有额度窗口在重置前 1 小时提醒一次，7 天窗口还会在重置前 1 天提醒一次。
+- 自动为 Codex / Claude 启动新的 5 小时窗口。
+- 自动选择低消耗模型：Codex 优先 Luna，Claude 优先 Haiku。
+- 点火请求明确绑定单个 `auth_index`，失败不会切到另一个账号。
+- 状态保存在 `data/state.json`，重启后继续使用。
+
+## 5 小时窗口调度
+
+默认每天 **07:00** 是锚点。
+
+07:00 之后不再硬编码 12:00、17:00、22:00，而是读取每个账号真实的 `reset_at`：
+
+```text
+07:00 首轮
+  ↓
+读取真实 reset_at
+  ↓
+reset_at + 3 秒点火
+  ↓
+重新读取新的 reset_at
+  ↓
+继续
+```
+
+所以不同账号可以有不同的时间，例如：
+
+```text
+Claude   → 12:00:04 → 17:00:07 → 22:00:10
+Codex #1 → 12:03:21 → 17:03:24 → 22:03:27
+Codex #2 → 12:18:05 → 17:18:08 → 22:18:11
+```
+
+如果某个账号当天已经被正常使用过，watcher 会沿用它当前真实的窗口，而不是强行重新对齐。
+
+默认在 22:00 后保留 30 分钟漂移范围。落在夜间的下一次 reset 不会继续点火，而是等到第二天 07:00。
+
+### 为什么不会串账号
+
+点火不是通过普通 `/v1` 请求进入 CPA 负载均衡，而是通过 Management API 的 `api-call`，并明确传入该凭证的 `auth_index`。
+
+因此：
+
+```text
+Codex #1 点火失败
+        ↓
+只记录 Codex #1 失败并稍后重试
+
+不会：
+Codex #1 → Codex #2
+```
+
+默认失败后 5 分钟只重试同一个 credential。
+
+## 点火请求
+
+Codex 会优先选择可用的 Luna 模型，Claude 会优先选择 Haiku。可以用环境变量手动指定：
+
+```env
+IGNITE_CODEX_MODEL=
+IGNITE_CLAUDE_MODEL=
+```
+
+请求会关闭工具和不必要的推理，并要求只返回：
+
+```text
+OK
+```
+
+Claude 还会限制极短输出。Codex 的 ChatGPT 后端不接受 `max_output_tokens`，因此使用精确指令控制输出。
+
+Antigravity 目前只监控额度，不参与窗口点火。
 
 ## 通知示例
-
-额度下降：
 
 ```text
 ⚠️ CPA · Claude · 7d 48%
@@ -32,37 +94,19 @@
 7d：48% | 03天 | 10/01 13:59
 ```
 
-重置提醒：
-
 ```text
-⏰ CPA · Gemini · 5h 重置提醒
+⏰ CPA · Codex #2 · 5h 重置提醒
 
-5h：94% | 07分 | 09/28 04:16
-7d：95% | 03天 | 10/01 13:59
+5h：19% | 01时 | 09/28 13:55
+7d：81% | 06天 | 10/04 21:27
 ```
-
-额度恢复：
 
 ```text
 ✅ CPA · Claude · 7d 已恢复
 
-5h：83% | 02时 | 09/28 05:59
+5h：96% | 04时 | 09/28 13:50
 7d：100% | 03天 | 10/01 13:59
 ```
-
-## 时间格式
-
-正文同时显示粗略剩余时间和准确重置时间：
-
-```text
-7d：48% | 03天 | 10/01 13:59
-```
-
-粗略时间按当前所在单位四舍五入：
-
-- 不到 1 小时：`59分`、`60分`
-- 1 小时到不足 1 天：`02时`、`24时`
-- 1 天以上：`03天`、`04天`
 
 ## 部署
 
@@ -72,7 +116,7 @@
 cp .env.example .env
 ```
 
-填写 Bark 地址：
+填写 Bark：
 
 ```env
 BARK_URL=https://api.day.app/your_device_key
@@ -81,7 +125,7 @@ BARK_GROUP=CPA
 
 ### 2. 提供 CLIProxyAPI 管理密钥
 
-可以直接写进 `.env`：
+可以写进 `.env`：
 
 ```env
 CPA_MANAGEMENT_KEY=your_management_key
@@ -93,7 +137,7 @@ CPA_MANAGEMENT_KEY=your_management_key
 /opt/cliproxyapi/watcher.env
 ```
 
-可在这个文件里写：
+其中可以写：
 
 ```env
 MANAGEMENT_PASSWORD=your_management_password
@@ -103,13 +147,13 @@ MANAGEMENT_PASSWORD=your_management_password
 
 ### 3. 检查 Docker 网络
 
-当前配置假设：
+默认假设：
 
-- CLIProxyAPI 容器名是 `cliproxyapi`
-- Management API 地址是 `http://cliproxyapi:8317/v0/management`
-- Docker 网络名是 `cliproxyapi_default`
+- CLIProxyAPI 容器名为 `cliproxyapi`
+- Management API 为 `http://cliproxyapi:8317/v0/management`
+- Docker 网络为 `cliproxyapi_default`
 
-如果你的环境不同，修改 `compose.yaml` 和 `.env`。
+环境不同的话修改 `compose.yaml` 和 `.env`。
 
 ### 4. 启动
 
@@ -123,10 +167,22 @@ docker compose up -d
 docker logs -f cpa-quota-watcher
 ```
 
-只轮询一次：
+只刷新一次额度，不发送点火请求：
 
 ```bash
-docker compose run --rm quota-watcher python /app/watcher.py --once
+docker compose run --rm quota-watcher python /app/scheduler.py --once
+```
+
+查看当前每个账号的下一次点火时间：
+
+```bash
+docker compose run --rm quota-watcher python /app/scheduler.py --show-schedule
+```
+
+运行测试：
+
+```bash
+docker compose run --rm quota-watcher python /app/test_scheduler.py
 ```
 
 ## 默认参数
@@ -139,25 +195,25 @@ CRITICAL_THRESHOLD=10
 NOTIFY_RECOVERY=true
 TZ_OFFSET_HOURS=8
 REQUEST_TIMEOUT=20
+
+IGNITE_ENABLED=true
+IGNITE_START_HOUR=7
+IGNITE_END_HOUR=22
+IGNITE_END_GRACE_MINUTES=30
+IGNITE_GRACE_SECONDS=3
+IGNITE_FAILURE_RETRY_SECONDS=300
+IGNITE_POST_SUCCESS_HOLD_SECONDS=60
 ```
 
-默认每 5 分钟刷新一次。
-
-重置提醒规则：
-
-```text
-所有窗口：0 < 距离 reset <= 1 小时
-7 天窗口：1 小时 < 距离 reset <= 1 天
-```
-
-通知会在进入对应时间范围后的下一次轮询发送。
+`POLL_INTERVAL` 仍然只负责额度刷新和 Bark 通知。点火调度直接使用真实 `reset_at` 的本地定时，不需要每 10 秒查询一次额度。
 
 ## 文件
 
-- `watcher.py`：额度查询、通知和状态逻辑
+- `watcher.py`：额度接口、Bark 通知和原有状态逻辑
+- `scheduler.py`：Codex / Claude 多账号额度读取和 5 小时窗口调度
+- `test_scheduler.py`：调度边界和定向 credential 测试
 - `compose.yaml`：Docker Compose 配置
 - `.env.example`：环境变量示例
-- `.gitignore`：忽略本地密钥和运行数据
 - `README_EN.md`：英文 README
 
 ## 安全
@@ -170,8 +226,18 @@ REQUEST_TIMEOUT=20
 - CLIProxyAPI auth 文件
 - `data/state.json`
 
-`.gitignore` 已忽略 `.env` 和 `data/`。
+watcher 不直接读取账号凭证文件。额度查询和点火都通过 CLIProxyAPI Management API 完成，`$TOKEN$` 由 CPA 根据指定 `auth_index` 在服务端替换。
 
-## 工作方式
+## 多账号
 
-watcher 通过 CLIProxyAPI Management API 调用上游额度接口。它不需要直接读取 Claude 或 Antigravity 的账号凭证文件。
+不需要把账号数量写死。新增 Codex 或 Claude OAuth credential 后，watcher 会自动发现并分别调度。
+
+例如以后有三个 Codex：
+
+```text
+Codex #1
+Codex #2
+Codex #3
+```
+
+它们各自维护自己的额度、`reset_at` 和下一次点火时间。
