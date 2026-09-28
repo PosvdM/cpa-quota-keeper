@@ -2,120 +2,239 @@
 
 [中文](./README.md)
 
-CPA Quota Keeper monitors quotas and triggers usage windows for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (CPA):
+CPA Quota Keeper adds quota monitoring and **Window Ignition** to [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (CPA).
 
-1. Queries remaining quotas for Codex, Claude, and Antigravity accounts, sending [Bark](https://github.com/Finb/Bark) notifications on quota drops, upcoming resets, and recoveries.
-2. Sends a minimal request to Codex and Claude accounts immediately after a 5-hour quota reset, starting the next window without delay.
+It does two jobs:
 
-## Supported Quotas
+1. Reads subscription quota and sends [Bark](https://github.com/Finb/Bark) alerts for low quota, upcoming resets, and recovery.
+2. For providers with Window Ignition enabled, sends a minimal request after a real 5-hour quota reset so the next window starts immediately.
 
-| Provider | Quota Windows | Window Ignition |
+Monitoring and ignition are separate. You can monitor a provider without automatically consuming its quota.
+
+## Supported providers
+
+| Provider | Monitoring | Window Ignition |
 | --- | --- | --- |
-| Codex | 5 hours, 7 days | Yes |
-| Claude | 5 hours, 7 days, Fable | Yes |
-| Antigravity | Gemini, Claude / GPT quota groups | No (monitoring only) |
+| ChatGPT / Codex | 5-hour and 7-day windows | Configurable |
+| Claude | 5-hour, 7-day, and Fable windows | Configurable |
+| Antigravity | Gemini, Claude / GPT, and other quota groups | Configurable |
+| Grok / xAI | Billing windows returned by xAI | Configurable when a real 5-hour window is reported |
 
-Each provider supports multiple accounts. Adding accounts requires no configuration changes.
+Keeper does not guess a window length from the provider name. A provider adapter normalizes upstream quota into a window and reset time. Any normalized 5-hour window can use the same scheduler.
+
+If a Grok / xAI account reports only weekly or monthly billing, Keeper can monitor those windows but does not invent a 5-hour window or send ignition requests for one.
+
+Multiple accounts per provider are supported without maintaining an account list.
+
+## Configuration
+
+Create both local config files:
+
+```bash
+cp .env.example .env
+cp keeper.example.toml keeper.toml
+```
+
+- `.env`: CPA connection, Bark, polling, and timezone.
+- `keeper.toml`: Window Ignition and per-provider behavior.
+
+Default provider settings:
+
+```toml
+[providers.codex]
+monitor = true
+ignite = true
+
+[providers.claude]
+monitor = true
+ignite = true
+
+[providers.antigravity]
+monitor = true
+ignite = false
+
+[providers.grok]
+monitor = true
+ignite = false
+```
+
+`monitor = true` reads quota and sends alerts.
+
+`ignite = true` adds real 5-hour windows from that provider to Window Ignition.
+
+This makes it possible to keep monitoring Antigravity while leaving its ignition disabled.
+
+### Window Ignition schedule
+
+```toml
+[window_ignition]
+enabled = true
+start_hour = 7
+end_hour = 22
+end_grace_minutes = 30
+grace_seconds = 3
+failure_retry_seconds = 300
+post_success_hold_seconds = 60
+```
+
+07:00 is the daily anchor. Later requests follow each window's real `reset_at` instead of fixed 12:00, 17:00, and 22:00 times:
+
+```text
+07:00 ignite
+  ↓
+read real reset_at
+  ↓
+ignite again at reset_at + 3 seconds
+  ↓
+read the new reset_at
+  ↓
+repeat
+```
+
+If an account was already used earlier, Keeper follows its current window instead of forcing it back onto a fixed clock.
+
+The default cutoff allows the last daytime window to drift until 22:30. Later resets wait until 07:00 the next day.
+
+A failed ignition retries the same credential after 5 minutes. It does not fail over to another account.
+
+### Antigravity
+
+One Antigravity account can expose several independent 5-hour quota groups, such as Gemini and Claude / GPT.
+
+Enable all detected 5-hour groups:
+
+```toml
+[providers.antigravity]
+monitor = true
+ignite = true
+```
+
+Limit ignition to one group:
+
+```toml
+[providers.antigravity]
+monitor = true
+ignite = true
+groups = ["Gemini"]
+```
+
+Optional per-group model overrides:
+
+```toml
+[providers.antigravity.models]
+"Gemini" = "gemini-3.5-flash-lite"
+"Claude / GPT" = "gpt-oss-120b-medium"
+```
+
+Without an override, Keeper chooses a lighter model from the models actually available to that credential.
+
+### Grok / xAI
+
+Grok uses the same provider config:
+
+```toml
+[providers.grok]
+monitor = true
+ignite = true
+model = ""
+```
+
+Keeper reads the xAI billing period. It only adds the account to Window Ignition when the upstream response represents a real 5-hour window.
+
+If the account only reports weekly or monthly billing, setting `ignite = true` does not create extra requests.
+
+## Ignition requests
+
+Every provider uses the same rule: keep the request small and pin it to one credential.
+
+- ChatGPT / Codex prefers Luna.
+- Claude prefers Haiku.
+- Antigravity Gemini prefers Flash Lite / Flash.
+- Antigravity Claude / GPT prefers a lighter compatible model.
+- Grok prefers a non-image, non-video lightweight model.
+
+Override automatic selection with `model`:
+
+```toml
+[providers.claude]
+monitor = true
+ignite = true
+model = "your-model-id"
+```
+
+Requests go through the CPA Management API with the exact `auth_index`. A failed request is never rerouted to another credential.
 
 ## Notifications
 
-Bark notifications trigger when:
+Default remaining-quota thresholds:
 
-- Remaining quota drops to 50%, 20%, 10%, or 0% (thresholds are configurable).
-- Any quota window is 1 hour from reset.
-- A 7-day window is 1 day from reset.
-- A quota recovers after a reset.
+```text
+50%
+20%
+10%
+0%
+```
 
-Notification examples:
+Keeper also sends:
+
+- a reminder within 1 hour of every reset,
+- an additional reminder within 1 day of a 7-day reset,
+- one recovery alert after quota recovers.
+
+Example:
 
 ```text
 ⚠️ Claude · 7d 48%
 
-5h：96% | 04时 | 09/28 13:50
-7d：48% | 03天 | 10/01 14:00
+5h：96% | 04h | 09/28 13:50
+7d：48% | 03d | 10/01 14:00
 ```
+
+When a provider has multiple accounts, Keeper creates a masked label from the first two and last two characters of the email local-part:
 
 ```text
-⏰ ChatGPT#bo~am · 5h 重置提醒
-
-5h：19% | 01时 | 09/28 13:55
-7d：81% | 06天 | 10/04 21:27
+alice.work@example.com → ChatGPT#al~rk
+bob.team@example.net   → ChatGPT#bo~am
 ```
 
-```text
-✅ Claude · 7d 已恢复
-
-5h：96% | 04时 | 09/28 13:50
-7d：100% | 03天 | 10/01 14:00
-```
-
-Each line shows the window, remaining quota, time until reset (`时` = hours, `天` = days), and reset time. In alert titles, `重置提醒` indicates a reset reminder, and `已恢复` indicates recovery.
-
-## Window Ignition
-
-The 5-hour window starts counting at the first request. Idle time after a reset delays the start of the next window. Keeper sends a lightweight request immediately after each reset to keep windows rolling continuously.
-
-Schedule flow:
-
-```text
-07:00 First ignition
-  ↓
-Read account reset_at
-  ↓
-Ignite again at reset_at + 3 seconds
-  ↓
-Read new reset_at, repeat
-```
-
-- Each account follows its own `reset_at` independently. For active accounts, Keeper tracks the existing window instead of forcing alignment to 07:00.
-- Daily ignitions end at 22:30 (`IGNITE_END_HOUR` + `IGNITE_END_GRACE_MINUTES`). Resets after this cut-off do not trigger and wait until 07:00 the next day.
-- Ignition requests require only an `OK` reply from the model without tools. Codex requests disable reasoning; Claude requests limit output to 4 tokens.
-- Models default to Luna for Codex and Haiku for Claude. Override them using `IGNITE_CODEX_MODEL` and `IGNITE_CLAUDE_MODEL`.
-- Requests bind to accounts via `auth_index`. Failed requests retry the same account after 5 minutes without failing over to another account.
+The label is only for notifications and logs. Routing still uses `auth_index`.
 
 ## Deployment
 
-### Prerequisites
-
-- CPA running in Docker with the Management API enabled
-- A Bark device key
-
-Default assumptions:
-
-| Setting | Default |
-| --- | --- |
-| Management API | `http://cliproxyapi:8317/v0/management` |
-| Docker network | `cliproxyapi_default` |
-| CPA config file | `/opt/cliproxyapi/config.yaml` |
-
-If your setup differs, edit `compose.yaml`.
-
-### 1. Create Configuration
+### 1. Create local config
 
 ```bash
 cp .env.example .env
+cp keeper.example.toml keeper.toml
 ```
 
-Set the Bark endpoint:
+Configure Bark:
 
 ```env
 BARK_URL=https://api.day.app/your_device_key
 BARK_GROUP=CPA
 ```
 
-### 2. Provide the Management Key
+Provide the CPA Management API key:
 
-Keeper looks for the management key in the following order and uses the first match:
+```env
+CPA_MANAGEMENT_KEY=your_management_key
+```
 
-1. `CPA_MANAGEMENT_KEY` in `.env`
-2. `MANAGEMENT_PASSWORD` in `/opt/cliproxyapi/watcher.env`
-3. The plain-text `remote-management.secret-key` in CPA's `config.yaml`
+You can also keep using `MANAGEMENT_PASSWORD` from `/opt/cliproxyapi/watcher.env`.
 
-If CPA has replaced `secret-key` in `config.yaml` with a bcrypt hash, provide the plain-text key via option 1 or 2.
+The default Docker setup expects:
 
-`compose.yaml` defaults to loading `/opt/cliproxyapi/watcher.env` and mounting `/opt/cliproxyapi/config.yaml`. If either file does not exist, `docker compose` will fail; remove unused file references from `compose.yaml`.
+| Setting | Default |
+| --- | --- |
+| CPA container | `cliproxyapi` |
+| Management API | `http://cliproxyapi:8317/v0/management` |
+| Docker network | `cliproxyapi_default` |
+| CPA config file | `/opt/cliproxyapi/config.yaml` |
 
-### 3. Start
+Edit `compose.yaml` if your setup differs.
+
+### 2. Start
 
 ```bash
 docker compose up -d
@@ -124,71 +243,58 @@ docker logs -f cpa-quota-keeper
 
 ## Commands
 
+Refresh quota without ignition:
+
 ```bash
-# Refresh quotas and send notifications once (without ignition)
 docker compose run --rm quota-keeper python /app/scheduler.py --once
+```
 
-# Show the next ignition time for each account
+Show the current ignition schedule:
+
+```bash
 docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
+```
 
-# Run tests
+Run tests:
+
+```bash
 docker compose run --rm quota-keeper python /app/test_scheduler.py
 ```
 
-## Configuration
+## .env
 
-Set all variables in `.env`.
+```env
+CPA_BASE_URL=http://cliproxyapi:8317/v0/management
+CPA_CONFIG_FILE=/run/cliproxyapi/config.yaml
+STATE_FILE=/data/state.json
+CPA_MANAGEMENT_KEY=
 
-### Notifications
+BARK_URL=https://api.day.app/your_device_key
+BARK_GROUP=CPA
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `BARK_URL` | empty | Bark push URL; notifications are disabled when empty |
-| `BARK_GROUP` | `CPA` | Bark notification group |
-| `BARK_ICON` | CPA logo | Notification icon |
-| `POLL_INTERVAL` | `300` | Quota check interval in seconds (minimum: 60) |
-| `NOTICE_THRESHOLD` | `50` | First alert threshold (%) |
-| `LOW_THRESHOLD` | `20` | Second alert threshold (%) |
-| `CRITICAL_THRESHOLD` | `10` | Third alert threshold (%) |
-| `NOTIFY_RECOVERY` | `true` | Send notification when a quota recovers |
-| `TZ_OFFSET_HOURS` | `8` | UTC offset for displayed times and ignition schedule |
-| `REQUEST_TIMEOUT` | `20` | HTTP request timeout in seconds |
+POLL_INTERVAL=300
+NOTICE_THRESHOLD=50
+LOW_THRESHOLD=20
+CRITICAL_THRESHOLD=10
+NOTIFY_RECOVERY=true
 
-`POLL_INTERVAL` affects only quota polling and notifications. Ignition timing depends on `reset_at`, not polling frequency.
-
-### Window Ignition
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `IGNITE_ENABLED` | `true` | Enable Window Ignition |
-| `IGNITE_START_HOUR` | `7` | Daily ignition start hour |
-| `IGNITE_END_HOUR` | `22` | Daily ignition end hour |
-| `IGNITE_END_GRACE_MINUTES` | `30` | Grace window in minutes after `IGNITE_END_HOUR` |
-| `IGNITE_GRACE_SECONDS` | `3` | Delay in seconds after `reset_at` before triggering |
-| `IGNITE_FAILURE_RETRY_SECONDS` | `300` | Retry delay after failure in seconds (minimum: 60) |
-| `IGNITE_POST_SUCCESS_HOLD_SECONDS` | `60` | Cooldown period after success in seconds (minimum: 15) |
-| `IGNITE_CODEX_MODEL` | empty | Codex ignition model (defaults to Luna) |
-| `IGNITE_CLAUDE_MODEL` | empty | Claude ignition model (defaults to Haiku) |
-
-## Account Naming
-
-When a provider has one account, notifications show only the provider name (`Claude`, `ChatGPT`, `Gemini`).
-
-With multiple accounts under one provider, Keeper appends a suffix using the first two and last two characters of the email username:
-
-```text
-alice.work@example.com → ChatGPT#al~rk
-bob.team@example.net   → ChatGPT#bo~am
+TZ_OFFSET_HOURS=8
+REQUEST_TIMEOUT=20
+KEEPER_CONFIG=/app/keeper.toml
 ```
 
-This suffix appears only in notifications and logs. Account scheduling and API requests remain keyed by `auth_index`.
+`POLL_INTERVAL` only controls quota refreshes and notifications. Window Ignition uses real reset times and has its own scheduler.
+
+Legacy `IGNITE_*` environment variables remain available as a compatibility fallback, but new deployments should keep ignition settings in `keeper.toml`.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `watcher.py` | Queries quotas, generates and sends notifications |
-| `scheduler.py` | Main entrypoint: multi-account scheduling and Window Ignition |
+| `watcher.py` | Reads quota, builds Bark alerts, and stores notification state |
+| `scheduler.py` | Provider adapters, 5-hour scheduling, and Window Ignition |
+| `keeper.example.toml` | Provider and ignition configuration template |
+| `keeper.toml` | Local configuration; do not commit it |
 | `test_scheduler.py` | Unit tests |
 | `compose.yaml` | Docker Compose configuration |
 | `.env.example` | Environment variable template |
@@ -196,6 +302,15 @@ This suffix appears only in notifications and logs. Account scheduling and API r
 
 ## Security
 
-- Keeper does not read credential files from disk directly. Quota queries and ignition calls run through the CPA Management API, using credentials managed on the CPA server by `auth_index`. If an Antigravity credential lacks a `project_id`, Keeper retrieves the file through the Management API to inspect it.
-- The container runs with a read-only root filesystem and drops all Linux capabilities.
-- Never commit `.env`, Bark device keys, management secrets, CPA credential files, or `data/state.json`. `.gitignore` excludes `.env` and `data/`.
+Do not commit:
+
+- `.env`
+- `keeper.toml`
+- Bark device keys
+- CPA Management keys
+- CPA auth files
+- `data/state.json`
+
+`.gitignore` excludes `.env`, `keeper.toml`, and `data/`.
+
+Quota reads and ignition requests go through the CPA Management API. Ignition uses the selected credential's exact `auth_index` instead of normal load balancing.
