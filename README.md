@@ -2,97 +2,109 @@
 
 [English](./README_EN.md)
 
-监控 CLIProxyAPI 中的 Codex、Claude 和 Antigravity 额度，通过 Bark 发通知，并可自动维持 Codex / Claude 的 5 小时额度窗口。
+给 CLIProxyAPI 加一层额度监控和自动点火。
 
-## 功能
+它会读取 Codex、Claude 和 Antigravity 的额度，通过 Bark 发提醒，并在 Codex / Claude 的 5 小时额度重置后自动发一个最小请求，启动下一轮额度窗口。
 
-- 主动读取上游额度，不依赖管理页面缓存。
-- 支持多个 Codex 和 Claude 凭证，每个账号独立记录额度与重置时间。
-- 支持 Codex 的 5 小时和 7 天额度。
-- 支持 Claude 的 5 小时、7 天和 Fable 额度。
-- 支持 Antigravity 的 Gemini、Claude / GPT 额度组。
-- 剩余额度跨过 `50%`、`20%`、`10%`、`0%` 时通过 Bark 通知。
-- 额度恢复后通知一次。
-- 所有额度窗口在重置前 1 小时提醒一次，7 天窗口还会在重置前 1 天提醒一次。
-- 自动为 Codex / Claude 启动新的 5 小时窗口。
-- 自动选择低消耗模型：Codex 优先 Luna，Claude 优先 Haiku。
-- 点火请求明确绑定单个 `auth_index`，失败不会切到另一个账号。
-- 状态保存在 `data/state.json`，重启后继续使用。
+## 支持什么
 
-## Window Ignition（窗口点火）
+- Codex：5 小时、7 天额度
+- Claude：5 小时、7 天、Fable 额度
+- Antigravity：Gemini、Claude / GPT 额度组
+- 多个 Codex / Claude 账号
+- Bark 额度提醒、重置提醒和恢复提醒
+- Codex / Claude 5 小时窗口自动点火
 
-默认每天 **07:00** 是锚点。
-
-07:00 之后不再硬编码 12:00、17:00、22:00，而是读取每个账号真实的 `reset_at`：
+默认提醒阈值：
 
 ```text
-07:00 首轮
+50% → 提醒
+20% → 提醒
+10% → 提醒
+ 0% → 提醒
+```
+
+所有额度窗口会在重置前 1 小时提醒一次。7 天窗口还会在重置前 1 天提醒一次。
+
+额度恢复后会再通知一次。
+
+## Window Ignition
+
+每天 **07:00** 作为起点。
+
+07:00 之后，Keeper 不再按固定的 12:00、17:00、22:00 发请求，而是读取每个账号真实的 `reset_at`。
+
+```text
+07:00 点火
   ↓
-读取真实 reset_at
+读取 reset_at
   ↓
-reset_at + 3 秒点火
+reset_at + 3 秒再次点火
   ↓
-重新读取新的 reset_at
+读取新的 reset_at
   ↓
 继续
 ```
 
-所以不同账号可以有不同的时间，例如：
+这样每个账号都按自己的实际重置时间运行。
 
-```text
-Claude   → 12:00:04 → 17:00:07 → 22:00:10
-ChatGPT#u5~xx → 12:03:21 → 17:03:24 → 22:03:27
-ChatGPT#u4~xx → 12:18:05 → 17:18:08 → 22:18:11
-```
+如果某个账号已经提前用过，Keeper 会继续沿用它当前的额度窗口，不会强行重新对齐。
 
-如果某个账号当天已经被正常使用过，keeper 会沿用它当前真实的窗口，而不是强行重新对齐。
+默认允许最后一轮在 22:00 后漂移 30 分钟。再晚的重置不会继续点火，会等到第二天 07:00。
 
-默认在 22:00 后保留 30 分钟漂移范围。落在夜间的下一次 reset 不会继续点火，而是等到第二天 07:00。
+### 点火请求
 
-### 为什么不会串账号
+Codex 优先使用可用的 Luna，Claude 优先使用 Haiku。
 
-点火不是通过普通 `/v1` 请求进入 CPA 负载均衡，而是通过 Management API 的 `api-call`，并明确传入该凭证的 `auth_index`。
-
-因此：
-
-```text
-ChatGPT#u5~xx 点火失败
-        ↓
-只记录 ChatGPT#u5~xx 失败并稍后重试
-
-不会：
-ChatGPT#u5~xx → Codex #2
-```
-
-默认失败后 5 分钟只重试同一个 credential。
-
-## 点火请求
-
-Codex 会优先选择可用的 Luna 模型，Claude 会优先选择 Haiku。可以用环境变量手动指定：
-
-```env
-IGNITE_CODEX_MODEL=
-IGNITE_CLAUDE_MODEL=
-```
-
-请求会关闭工具和不必要的推理，并要求只返回：
+请求只要求模型回复：
 
 ```text
 OK
 ```
 
-Claude 还会限制极短输出。Codex 的 ChatGPT 后端不接受 `max_output_tokens`，因此使用精确指令控制输出。
+工具调用会关闭，推理也会尽量关闭或降到最低。
 
-Antigravity 目前只监控额度，不参与窗口点火。
+点火会直接绑定当前 credential 的 `auth_index`。某个账号失败时，只会重试这个账号，不会切到另一个账号。
+
+默认失败后 5 分钟重试。
+
+Antigravity 目前只监控额度，不参与点火。
+
+## 多账号显示
+
+同一 provider 只有一个账号时，只显示 provider 名：
+
+```text
+Gemini
+Claude
+ChatGPT
+```
+
+有多个同类账号时，Keeper 会自动读取 credential 的账号邮箱，并用邮箱用户名的前 2 个字符和后 2 个字符生成脱敏后缀。
+
+例如：
+
+```text
+trr244426@…  → ChatGPT#u5~xx
+posvdm6+eg@… → ChatGPT#u4~xx
+```
+
+这个名字只用于通知和日志。实际路由仍按 `auth_index` 区分。
+
+新增账号后不需要改代码。
 
 ## 通知示例
+
+额度下降：
 
 ```text
 ⚠️ Claude · 7d 48%
 
-5h：83% | 02时 | 09/28 05:59
-7d：48% | 03天 | 10/01 13:59
+5h：96% | 04时 | 09/28 13:50
+7d：48% | 03天 | 10/01 14:00
 ```
+
+重置提醒：
 
 ```text
 ⏰ ChatGPT#u4~xx · 5h 重置提醒
@@ -101,16 +113,18 @@ Antigravity 目前只监控额度，不参与窗口点火。
 7d：81% | 06天 | 10/04 21:27
 ```
 
+额度恢复：
+
 ```text
 ✅ Claude · 7d 已恢复
 
 5h：96% | 04时 | 09/28 13:50
-7d：100% | 03天 | 10/01 13:59
+7d：100% | 03天 | 10/01 14:00
 ```
 
 ## 部署
 
-### 1. 准备配置
+复制配置：
 
 ```bash
 cp .env.example .env
@@ -123,39 +137,39 @@ BARK_URL=https://api.day.app/your_device_key
 BARK_GROUP=CPA
 ```
 
-### 2. 提供 CLIProxyAPI 管理密钥
+再提供 CLIProxyAPI 的 Management API 密钥。
 
-可以写进 `.env`：
+可以直接写进 `.env`：
 
 ```env
 CPA_MANAGEMENT_KEY=your_management_key
 ```
 
-当前 `compose.yaml` 也会读取：
+也可以使用：
 
 ```text
 /opt/cliproxyapi/watcher.env
 ```
 
-其中可以写：
+并填写：
 
 ```env
 MANAGEMENT_PASSWORD=your_management_password
 ```
 
-两种方式选一种即可。
+两种方式选一种。
 
-### 3. 检查 Docker 网络
+默认 Docker 配置假设：
 
-默认假设：
+```text
+CLIProxyAPI 容器：cliproxyapi
+Management API：http://cliproxyapi:8317/v0/management
+Docker 网络：cliproxyapi_default
+```
 
-- CLIProxyAPI 容器名为 `cliproxyapi`
-- Management API 为 `http://cliproxyapi:8317/v0/management`
-- Docker 网络为 `cliproxyapi_default`
+如果你的环境不同，修改 `compose.yaml` 和 `.env`。
 
-环境不同的话修改 `compose.yaml` 和 `.env`。
-
-### 4. 启动
+启动：
 
 ```bash
 docker compose up -d
@@ -167,13 +181,15 @@ docker compose up -d
 docker logs -f cpa-quota-keeper
 ```
 
-只刷新一次额度，不发送点火请求：
+## 常用命令
+
+只刷新一次额度，不点火：
 
 ```bash
 docker compose run --rm quota-keeper python /app/scheduler.py --once
 ```
 
-查看当前每个账号的下一次点火时间：
+查看每个账号下一次点火时间：
 
 ```bash
 docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
@@ -185,7 +201,7 @@ docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
 docker compose run --rm quota-keeper python /app/test_scheduler.py
 ```
 
-## 默认参数
+## 默认配置
 
 ```env
 POLL_INTERVAL=300
@@ -193,6 +209,7 @@ NOTICE_THRESHOLD=50
 LOW_THRESHOLD=20
 CRITICAL_THRESHOLD=10
 NOTIFY_RECOVERY=true
+
 TZ_OFFSET_HOURS=8
 REQUEST_TIMEOUT=20
 
@@ -203,22 +220,27 @@ IGNITE_END_GRACE_MINUTES=30
 IGNITE_GRACE_SECONDS=3
 IGNITE_FAILURE_RETRY_SECONDS=300
 IGNITE_POST_SUCCESS_HOLD_SECONDS=60
+
+IGNITE_CODEX_MODEL=
+IGNITE_CLAUDE_MODEL=
 ```
 
-`POLL_INTERVAL` 仍然只负责额度刷新和 Bark 通知。点火调度直接使用真实 `reset_at` 的本地定时，不需要每 10 秒查询一次额度。
+`POLL_INTERVAL` 只控制额度刷新和 Bark 通知。
+
+Window Ignition 使用 `reset_at` 安排下一次点火，不需要高频轮询额度。
 
 ## 文件
 
-- `watcher.py`：额度接口、Bark 通知和原有状态逻辑
-- `scheduler.py`：Codex / Claude 多账号额度读取和 5 小时窗口调度
-- `test_scheduler.py`：调度边界和定向 credential 测试
+- `watcher.py`：读取额度、生成通知、保存通知状态
+- `scheduler.py`：多账号调度和 Window Ignition
+- `test_scheduler.py`：测试
 - `compose.yaml`：Docker Compose 配置
-- `.env.example`：环境变量示例
-- `README_EN.md`：英文 README
+- `.env.example`：配置示例
+- `data/state.json`：运行状态
 
 ## 安全
 
-不要提交：
+不要提交这些文件或内容：
 
 - `.env`
 - Bark device key
@@ -226,30 +248,6 @@ IGNITE_POST_SUCCESS_HOLD_SECONDS=60
 - CLIProxyAPI auth 文件
 - `data/state.json`
 
-keeper 不直接读取账号凭证文件。额度查询和点火都通过 CLIProxyAPI Management API 完成，`$TOKEN$` 由 CPA 根据指定 `auth_index` 在服务端替换。
+Keeper 不直接读取账号凭证文件。
 
-## 多账号
-
-单账号 provider（例如只有一个 Gemini、一个 Claude）直接显示 provider 名，不额外加账号后缀。多个同类账号会自动读取 credential 的账号邮箱，并用邮箱 local-part 的前 2 个字符和后 2 个字符生成脱敏后缀。
-
-例如：
-
-```text
-trr244426@…  → ChatGPT#u5~xx
-posvdm6+eg@… → ChatGPT#u4~xx
-```
-
-显示名只用于通知和日志；实际点火仍按对应 `auth_index` 精确绑定，不影响路由。
-
-
-不需要把账号数量写死。新增 Codex 或 Claude OAuth credential 后，keeper 会自动发现并分别调度。
-
-例如以后有三个 Codex：
-
-```text
-Codex #1
-Codex #2
-Codex #3
-```
-
-它们各自维护自己的额度、`reset_at` 和下一次点火时间。
+额度查询和点火都通过 CLIProxyAPI Management API 完成。CPA 会根据指定的 `auth_index` 在服务端使用对应 credential。
