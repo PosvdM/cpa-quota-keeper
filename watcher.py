@@ -28,7 +28,7 @@ REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "20"))
 NOTIFY_RECOVERY = os.getenv("NOTIFY_RECOVERY", "true").lower() not in {"0", "false", "no", "off"}
 TZ_OFFSET_HOURS = float(os.getenv("TZ_OFFSET_HOURS", "8"))
 LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET_HOURS))
-RESET_ID_TOLERANCE_SECONDS = 600
+RESET_ID_TOLERANCE_SECONDS = 10
 
 ANTIGRAVITY_URLS = [
     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
