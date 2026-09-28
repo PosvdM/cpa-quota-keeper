@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 import scheduler
+import watcher
 
 
 class SchedulerTests(unittest.TestCase):
@@ -48,6 +49,86 @@ class SchedulerTests(unittest.TestCase):
             client.calls,
             [("auth-A", "POST", scheduler.CODEX_RESPONSES_URL)],
         )
+
+
+    def test_notification_title_has_no_cpa_prefix(self):
+        group = {
+            "label": "Claude",
+            "windows": [
+                {"id": "seven-day", "label": "7 Day", "remaining": 48.0, "reset": None},
+            ],
+        }
+        changes = [
+            {
+                "id": "seven-day",
+                "label": "7 Day",
+                "from": "normal",
+                "to": "notice",
+                "direction": "down",
+                "remaining": 48.0,
+            }
+        ]
+        title, _, _ = watcher.build_notification(group, changes)
+        self.assertEqual(title, "⚠️ Claude · 7d 48%")
+        self.assertNotIn("CPA", title)
+
+    def test_custom_chatgpt_account_labels(self):
+        old = scheduler.ACCOUNT_LABELS
+        try:
+            scheduler.ACCOUNT_LABELS = {
+                "auth-A": "ChatGPT#u1~xx",
+                "auth-B": "ChatGPT#u4~xx",
+            }
+            a = {"provider": "codex", "auth_index": "auth-A"}
+            b = {"provider": "codex", "auth_index": "auth-B"}
+            self.assertEqual(scheduler.credential_label(a, 1, 2), "ChatGPT#u1~xx")
+            self.assertEqual(scheduler.credential_label(b, 2, 2), "ChatGPT#u4~xx")
+        finally:
+            scheduler.ACCOUNT_LABELS = old
+
+    def test_legacy_state_is_merged_before_processing(self):
+        state = {
+            "groups": {
+                "claude:main": {
+                    "windows": {
+                        "seven-day": {
+                            "severity": "notice",
+                            "notified_severity": "notice",
+                            "remaining": 48.0,
+                            "reset": "2026-10-01T06:00:00+00:00",
+                        }
+                    }
+                },
+                "claude:auth-A:claude:main": {
+                    "windows": {
+                        "seven-day": {
+                            "severity": "notice",
+                            "remaining": 48.0,
+                            "reset": "2026-10-01T05:59:59+00:00",
+                        }
+                    }
+                },
+            }
+        }
+        group = {
+            "key": "claude:auth-A:claude:main",
+            "legacy_key": "claude:main",
+            "label": "Claude",
+            "windows": [],
+        }
+        old_process = watcher.process_group
+        old_save = watcher.save_state
+        try:
+            watcher.process_group = lambda state, group: None
+            watcher.save_state = lambda state: None
+            scheduler.process_groups(state, [group])
+        finally:
+            watcher.process_group = old_process
+            watcher.save_state = old_save
+
+        self.assertNotIn("claude:main", state["groups"])
+        merged = state["groups"]["claude:auth-A:claude:main"]["windows"]["seven-day"]
+        self.assertEqual(merged["notified_severity"], "notice")
 
 
 if __name__ == "__main__":
