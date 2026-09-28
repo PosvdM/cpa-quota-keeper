@@ -80,13 +80,13 @@ Claude
 ChatGPT
 ```
 
-有多个同类账号时，Keeper 会自动读取 credential 的账号邮箱，并用邮箱用户名的前 2 个字符和后 2 个字符生成脱敏后缀。
+有多个同类账号时，Keeper 会读取 credential 的账号邮箱，并用邮箱用户名的前 2 个字符和后 2 个字符生成脱敏后缀。
 
 例如：
 
 ```text
-trr244426@…  → ChatGPT#u5~xx
-posvdm6+eg@… → ChatGPT#u4~xx
+alice.work@example.com → ChatGPT#al~rk
+bob.team@example.net   → ChatGPT#bo~am
 ```
 
 这个名字只用于通知和日志。实际路由仍按 `auth_index` 区分。
@@ -107,7 +107,7 @@ posvdm6+eg@… → ChatGPT#u4~xx
 重置提醒：
 
 ```text
-⏰ ChatGPT#u4~xx · 5h 重置提醒
+⏰ ChatGPT#bo~am · 5h 重置提醒
 
 5h：19% | 01时 | 09/28 13:55
 7d：81% | 06天 | 10/04 21:27
