@@ -587,6 +587,31 @@ def is_seven_day_window(window):
     return short_window_label(label) == "7d" or label.startswith("7 Day")
 
 
+def detect_reset_recovery(old, window, now, current_severity):
+    pending = old.get("pending_reset_recovery_for")
+    if pending and current_severity == "normal":
+        if not same_reset_cycle(old.get("reset_recovery_for"), pending):
+            return pending
+
+    if current_severity != "normal":
+        return None
+
+    cycle = old.get("reset_notice_1h_for") or old.get("reset_notice_for")
+    if not cycle or same_reset_cycle(old.get("reset_recovery_for"), cycle):
+        return None
+
+    target = parse_time(cycle)
+    if not target or now < target:
+        return None
+
+    old_reset = old.get("reset")
+    current_reset = window.get("reset")
+    if old_reset and same_reset_cycle(old_reset, cycle):
+        if not current_reset or not same_reset_cycle(current_reset, cycle):
+            return cycle
+    return None
+
+
 def send_bark(title, body, level):
     if not BARK_URL:
         log(f"Bark 未配置，跳过推送：{title}")
@@ -632,22 +657,28 @@ def process_group(state, group):
         notified = old.get("notified_severity", "normal")
         notified_rank = SEVERITY_RANK.get(notified, 0)
         current_rank = SEVERITY_RANK[current]
+        reset_recovery_for = detect_reset_recovery(old, window, now, current)
 
         direction = None
         if current_rank > notified_rank:
             direction = "down"
         elif NOTIFY_RECOVERY and notified_rank > 0 and current_rank < notified_rank:
             direction = "up"
+        elif NOTIFY_RECOVERY and reset_recovery_for:
+            direction = "up"
 
         if direction:
-            changes.append({
+            change = {
                 "id": wid,
                 "label": window["label"],
                 "from": notified,
                 "to": current,
                 "direction": direction,
                 "remaining": window["remaining"],
-            })
+            }
+            if direction == "up" and reset_recovery_for:
+                change["reset_recovery_for"] = reset_recovery_for
+            changes.append(change)
 
         reset_value = window.get("reset")
         reset_dt = parse_time(reset_value)
@@ -685,12 +716,18 @@ def process_group(state, group):
             "reset": window.get("reset"),
             "last_seen": int(time.time()),
         }
+        if reset_recovery_for:
+            prev_windows[wid]["pending_reset_recovery_for"] = reset_recovery_for
 
     if changes:
         title, body, level = build_notification(group, changes)
         if send_bark(title, body, level):
+            has_worsening = any(change["direction"] == "down" for change in changes)
             for change in changes:
                 prev_windows[change["id"]]["notified_severity"] = change["to"]
+                if change.get("reset_recovery_for") and not has_worsening:
+                    prev_windows[change["id"]]["reset_recovery_for"] = change["reset_recovery_for"]
+                    prev_windows[change["id"]].pop("pending_reset_recovery_for", None)
 
     if reset_reminders:
         title, body, level = build_reset_notification(group, reset_reminders)
