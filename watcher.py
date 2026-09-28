@@ -26,6 +26,7 @@ LOW_THRESHOLD = float(os.getenv("LOW_THRESHOLD", "20"))
 CRITICAL_THRESHOLD = float(os.getenv("CRITICAL_THRESHOLD", "10"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "20"))
 NOTIFY_RECOVERY = os.getenv("NOTIFY_RECOVERY", "true").lower() not in {"0", "false", "no", "off"}
+NOTIFY_RESET_REMINDERS = os.getenv("NOTIFY_RESET_REMINDERS", "true").lower() not in {"0", "false", "no", "off"}
 TZ_OFFSET_HOURS = float(os.getenv("TZ_OFFSET_HOURS", "8"))
 LOCAL_TZ = timezone(timedelta(hours=TZ_OFFSET_HOURS))
 RESET_ID_TOLERANCE_SECONDS = 10
@@ -682,7 +683,7 @@ def process_group(state, group):
 
         reset_value = window.get("reset")
         reset_dt = parse_time(reset_value)
-        if reset_dt and reset_value:
+        if NOTIFY_RESET_REMINDERS and reset_dt and reset_value:
             seconds_until_reset = (reset_dt - now).total_seconds()
             one_hour_notified = (
                 same_reset_cycle(old.get("reset_notice_1h_for"), reset_value)
