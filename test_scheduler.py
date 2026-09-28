@@ -141,5 +141,83 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(merged["notified_severity"], "notice")
 
 
+    def test_antigravity_can_be_enabled_by_provider_config(self):
+        old = scheduler.PROVIDERS_CONFIG
+        try:
+            scheduler.PROVIDERS_CONFIG = {"antigravity": {"monitor": True, "ignite": True}}
+            group = {"source_label": "Gemini", "label": "Gemini"}
+            self.assertTrue(scheduler.group_ignition_enabled("antigravity", group))
+        finally:
+            scheduler.PROVIDERS_CONFIG = old
+
+    def test_antigravity_ignite_uses_exact_auth(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def api_call(self, auth_index, method, url, headers, data=None):
+                self.calls.append((auth_index, method, url, data))
+                return '{"response":{"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}}'
+
+        client = FakeClient()
+        account = {
+            "provider": "antigravity",
+            "file": {"provider": "antigravity", "auth_index": "auth-AG"},
+        }
+        old_resolve = watcher.resolve_project_id
+        try:
+            watcher.resolve_project_id = lambda client, file: "project-demo"
+            scheduler.ignite_antigravity(client, account, "gemini-demo")
+        finally:
+            watcher.resolve_project_id = old_resolve
+
+        self.assertEqual(client.calls[0][0:3], ("auth-AG", "POST", scheduler.ANTIGRAVITY_GENERATE_URL))
+        self.assertIn('"project":"project-demo"', client.calls[0][3])
+
+    def test_xai_five_hour_billing_is_normalized(self):
+        class FakeClient:
+            def api_call(self, auth_index, method, url, headers, data=None):
+                return """{
+                  "config": {
+                    "currentPeriod": {
+                      "start": "2026-09-28T00:00:00Z",
+                      "end": "2026-09-28T05:00:00Z"
+                    },
+                    "creditUsagePercent": 25
+                  }
+                }"""
+
+        groups = scheduler.fetch_xai_groups(
+            FakeClient(),
+            {"provider": "xai", "auth_index": "auth-X"},
+        )
+        window = groups[0]["windows"][0]
+        self.assertEqual(window["label"], "5 小时")
+        self.assertEqual(window["remaining"], 75.0)
+        self.assertTrue(scheduler.is_five_hour_window(window))
+
+    def test_xai_ignite_uses_exact_auth(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            def api_call(self, auth_index, method, url, headers, data=None):
+                self.calls.append((auth_index, method, url, data))
+                return '{"id":"resp_demo","output":[{"type":"message"}]}'
+
+        client = FakeClient()
+        account = {
+            "provider": "xai",
+            "file": {
+                "provider": "xai",
+                "auth_index": "auth-X",
+                "auth_kind": "oauth",
+            },
+        }
+        scheduler.ignite_xai(client, account, "grok-demo")
+        self.assertEqual(client.calls[0][0:3], ("auth-X", "POST", scheduler.XAI_CLI_RESPONSES_URL))
+
+
 if __name__ == "__main__":
     unittest.main()
+
