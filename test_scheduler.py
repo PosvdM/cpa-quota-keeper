@@ -245,6 +245,32 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(sent, [])
 
 
+    def test_low_quota_alert_survives_quiet_reset_settings(self):
+        state = {"groups": {}}
+        group = {
+            "key": "test:low-quota",
+            "label": "Test",
+            "windows": [
+                {"id": "five-hour", "label": "5 小时", "remaining": 20.0, "reset": None}
+            ],
+        }
+        old_recovery = watcher.NOTIFY_RECOVERY
+        old_reset = watcher.NOTIFY_RESET_REMINDERS
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.NOTIFY_RECOVERY = False
+            watcher.NOTIFY_RESET_REMINDERS = False
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            watcher.process_group(state, group)
+        finally:
+            watcher.NOTIFY_RECOVERY = old_recovery
+            watcher.NOTIFY_RESET_REMINDERS = old_reset
+            watcher.send_bark = old_send
+        self.assertEqual(len(sent), 1)
+        self.assertIn("5h 20%", sent[0][0])
+
+
 if __name__ == "__main__":
     unittest.main()
 
