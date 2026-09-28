@@ -41,8 +41,8 @@ Different accounts can therefore drift independently:
 
 ```text
 Claude   → 12:00:04 → 17:00:07 → 22:00:10
-Codex #1 → 12:03:21 → 17:03:24 → 22:03:27
-Codex #2 → 12:18:05 → 17:18:08 → 22:18:11
+ChatGPT#main → 12:03:21 → 17:03:24 → 22:03:27
+ChatGPT#team → 12:18:05 → 17:18:08 → 22:18:11
 ```
 
 If an account was already used earlier that day, its existing real window is preserved instead of being forced back onto a fixed clock.
@@ -53,7 +53,7 @@ The default schedule allows 30 minutes of drift after 22:00. A reset that falls 
 
 Window triggers do not go through normal CPA `/v1` load balancing. The scheduler calls the Management API `api-call` endpoint with the exact credential `auth_index`.
 
-If Codex #1 fails, only Codex #1 is marked failed and retried later. The request is never rerouted to Codex #2.
+If one ChatGPT credential fails, only that credential is marked failed and retried later. The request is never rerouted to another account.
 
 The default failure retry interval is 5 minutes.
 
@@ -197,6 +197,15 @@ Do not commit:
 The keeper does not directly read account credential files. Quota reads and trigger calls go through the CLIProxyAPI Management API, where CPA replaces `$TOKEN$` for the selected `auth_index` server-side.
 
 ## Multiple accounts
+
+A provider with one account (for example, one Gemini or one Claude account) is shown without an account suffix. When a provider has multiple credentials, you can assign stable display aliases with `ACCOUNT_LABELS_JSON`:
+
+```env
+ACCOUNT_LABELS_JSON={"auth_index_1":"ChatGPT#main","auth_index_2":"ChatGPT#team"}
+```
+
+Aliases are display-only. Routing and Window Ignition still bind to the exact `auth_index`.
+
 
 Account count is not hard-coded. New Codex or Claude OAuth credentials are discovered automatically and scheduled independently.
 
