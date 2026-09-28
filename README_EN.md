@@ -86,8 +86,9 @@ groups = ["Gemini"]
 ## Notifications
 
 - Alerts when remaining quota crosses **50%, 20%, 10%, and 0%**.
-- Reminders within 1 hour of every reset, plus 1 day before a 7-day reset.
-- One alert when quota recovers.
+- `NOTIFY_RESET_REMINDERS` controls reset reminders.
+- `NOTIFY_RECOVERY` controls recovery alerts.
+- The example config disables the last two to avoid redundant notifications when Window Ignition is enabled. Low-quota alerts are unaffected.
 
 Multi-account notifications and logs use masked suffixes, such as `alice.work@example.com` → `ChatGPT#al~rk`. Routing still uses `auth_index`.
 
