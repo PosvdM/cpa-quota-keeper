@@ -622,7 +622,7 @@ def send_bark(title, body, level):
     if BARK_ICON:
         params["icon"] = BARK_ICON
     url = f"{BARK_URL}/{path}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "cpa-quota-watcher/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "cpa-quota-keeper/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
             raw = resp.read().decode("utf-8", "replace")
