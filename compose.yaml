@@ -3,7 +3,7 @@ services:
     image: python:3.12-alpine
     container_name: cpa-quota-watcher
     restart: unless-stopped
-    command: ["python", "/app/watcher.py"]
+    command: ["python", "/app/scheduler.py"]
     env_file:
       - .env
       - /opt/cliproxyapi/watcher.env
@@ -13,6 +13,7 @@ services:
       STATE_FILE: /data/state.json
     volumes:
       - ./watcher.py:/app/watcher.py:ro
+      - ./scheduler.py:/app/scheduler.py:ro
       - ./data:/data
       - /opt/cliproxyapi/config.yaml:/run/cliproxyapi/config.yaml:ro
     networks:
