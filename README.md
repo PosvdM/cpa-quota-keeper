@@ -41,7 +41,7 @@ reset_at + 3 秒点火
 
 ```text
 Claude   → 12:00:04 → 17:00:07 → 22:00:10
-ChatGPT#u1~xx → 12:03:21 → 17:03:24 → 22:03:27
+ChatGPT#u5~xx → 12:03:21 → 17:03:24 → 22:03:27
 ChatGPT#u4~xx → 12:18:05 → 17:18:08 → 22:18:11
 ```
 
@@ -56,12 +56,12 @@ ChatGPT#u4~xx → 12:18:05 → 17:18:08 → 22:18:11
 因此：
 
 ```text
-ChatGPT#u1~xx 点火失败
+ChatGPT#u5~xx 点火失败
         ↓
-只记录 ChatGPT#u1~xx 失败并稍后重试
+只记录 ChatGPT#u5~xx 失败并稍后重试
 
 不会：
-ChatGPT#u1~xx → Codex #2
+ChatGPT#u5~xx → Codex #2
 ```
 
 默认失败后 5 分钟只重试同一个 credential。
@@ -230,13 +230,16 @@ keeper 不直接读取账号凭证文件。额度查询和点火都通过 CLIPro
 
 ## 多账号
 
-单账号 provider（例如只有一个 Gemini、一个 Claude）直接显示 provider 名，不额外加账号后缀。多个同类账号可以通过 `ACCOUNT_LABELS_JSON` 配置稳定别名：
+单账号 provider（例如只有一个 Gemini、一个 Claude）直接显示 provider 名，不额外加账号后缀。多个同类账号会自动读取 credential 的账号邮箱，并用邮箱 local-part 的前 2 个字符和后 2 个字符生成脱敏后缀。
 
-```env
-ACCOUNT_LABELS_JSON={"auth_index_1":"ChatGPT#main","auth_index_2":"ChatGPT#team"}
+例如：
+
+```text
+trr244426@…  → ChatGPT#u5~xx
+posvdm6+eg@… → ChatGPT#u4~xx
 ```
 
-别名只用于显示和日志，不改变路由；实际点火仍按对应 `auth_index` 精确绑定。
+显示名只用于通知和日志；实际点火仍按对应 `auth_index` 精确绑定，不影响路由。
 
 
 不需要把账号数量写死。新增 Codex 或 Claude OAuth credential 后，keeper 会自动发现并分别调度。
