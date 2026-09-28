@@ -86,8 +86,9 @@ groups = ["Gemini"]
 ## 通知
 
 - 剩余额度跨过 **50%、20%、10%、0%** 时提醒。
-- 所有窗口重置前 1 小时提醒；7 天窗口另在重置前 1 天提醒。
-- 额度恢复后通知一次。
+- `NOTIFY_RESET_REMINDERS` 控制重置前提醒。
+- `NOTIFY_RECOVERY` 控制额度恢复提醒。
+- 示例配置默认把后两项关闭，避免开启 Window Ignition 后重复打扰；低额度告警不受影响。
 
 多账号通知和日志使用脱敏后缀，例如 `alice.work@example.com` → `ChatGPT#al~rk`；路由仍使用 `auth_index`。
 
