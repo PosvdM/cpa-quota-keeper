@@ -12,6 +12,7 @@ Monitor Claude and Antigravity quotas in CLIProxyAPI and send alerts through Bar
 - Sends alerts when remaining quota crosses `50%`, `20%`, `10%`, or `0%`.
 - Does not repeat alerts while a quota stays in the same threshold range.
 - Sends one recovery alert when quota returns to a healthier range.
+- After a 1-hour reset reminder, the watcher also sends one recovery alert when that reset actually completes, even when both the old and new quota values are in the normal range.
 - Sends one reset reminder for every quota window within 1 hour of reset.
 - Sends an extra reset reminder for 7-day windows within 1 day of reset.
 - Keeps the 1-day and 1-hour reminders separate, so restarting the watcher does not resend the same reminder.
