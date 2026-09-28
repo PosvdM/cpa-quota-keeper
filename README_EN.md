@@ -41,8 +41,8 @@ Different accounts can therefore drift independently:
 
 ```text
 Claude   → 12:00:04 → 17:00:07 → 22:00:10
-ChatGPT#main → 12:03:21 → 17:03:24 → 22:03:27
-ChatGPT#team → 12:18:05 → 17:18:08 → 22:18:11
+ChatGPT#u5~xx → 12:03:21 → 17:03:24 → 22:03:27
+ChatGPT#u4~xx → 12:18:05 → 17:18:08 → 22:18:11
 ```
 
 If an account was already used earlier that day, its existing real window is preserved instead of being forced back onto a fixed clock.
@@ -201,7 +201,7 @@ The keeper does not directly read account credential files. Quota reads and trig
 A provider with one account (for example, one Gemini or one Claude account) is shown without an account suffix. When a provider has multiple credentials, you can assign stable display aliases with `ACCOUNT_LABELS_JSON`:
 
 ```env
-ACCOUNT_LABELS_JSON={"auth_index_1":"ChatGPT#main","auth_index_2":"ChatGPT#team"}
+ACCOUNT_LABELS_JSON={"auth_index_1":"ChatGPT#u5~xx","auth_index_2":"ChatGPT#u4~xx"}
 ```
 
 Aliases are display-only. Routing and Window Ignition still bind to the exact `auth_index`.
