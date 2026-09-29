@@ -266,9 +266,9 @@ def format_compact_duration(seconds):
     if seconds <= 0:
         return "可刷新"
     if seconds >= 86400:
-        return f"{max(1, int(seconds / 86400 + 0.5)):02d}天"
+        return f"{max(1, int(seconds / 86400 + 0.5)):02d}d"
     if seconds >= 3600:
-        return f"{max(1, int(seconds / 3600 + 0.5)):02d}时"
+        return f"{max(1, int(seconds / 3600 + 0.5)):02d}h"
     return f"{max(1, int(seconds / 60 + 0.5)):02d}分"
 
 
