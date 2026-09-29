@@ -51,6 +51,11 @@ class SchedulerTests(unittest.TestCase):
         )
 
 
+    def test_compact_duration_uses_letter_units(self):
+        self.assertEqual(watcher.format_compact_duration(6 * 86400), "06d")
+        self.assertEqual(watcher.format_compact_duration(5 * 3600), "05h")
+        self.assertEqual(watcher.format_compact_duration(30 * 60), "30m")
+
     def test_notification_title_has_no_cpa_prefix(self):
         group = {
             "label": "Claude",

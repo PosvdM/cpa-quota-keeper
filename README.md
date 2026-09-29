@@ -89,6 +89,7 @@ groups = ["Gemini"]
 - `NOTIFY_RESET_REMINDERS` 控制重置前提醒。
 - `NOTIFY_RECOVERY` 控制额度恢复提醒。
 - 示例配置默认把后两项关闭，避免开启 Window Ignition 后重复打扰；低额度告警不受影响。
+- 通知中的剩余时间使用紧凑单位：`d`（天）、`h`（小时）、`m`（分钟），例如 `06d`、`05h`、`30m`。
 
 多账号通知和日志使用脱敏后缀，例如 `alice.work@example.com` → `ChatGPT#al~rk`；路由仍使用 `auth_index`。
 

@@ -269,7 +269,7 @@ def format_compact_duration(seconds):
         return f"{max(1, int(seconds / 86400 + 0.5)):02d}d"
     if seconds >= 3600:
         return f"{max(1, int(seconds / 3600 + 0.5)):02d}h"
-    return f"{max(1, int(seconds / 60 + 0.5)):02d}分"
+    return f"{max(1, int(seconds / 60 + 0.5)):02d}m"
 
 
 def format_reset(value):

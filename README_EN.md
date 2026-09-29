@@ -89,6 +89,7 @@ groups = ["Gemini"]
 - `NOTIFY_RESET_REMINDERS` controls reset reminders.
 - `NOTIFY_RECOVERY` controls recovery alerts.
 - The example config disables the last two to avoid redundant notifications when Window Ignition is enabled. Low-quota alerts are unaffected.
+- Notification countdowns use compact units: `d` for days, `h` for hours, and `m` for minutes, for example `06d`, `05h`, and `30m`.
 
 Multi-account notifications and logs use masked suffixes, such as `alice.work@example.com` → `ChatGPT#al~rk`. Routing still uses `auth_index`.
 
