@@ -668,10 +668,17 @@ def process_group(state, group):
         reset_recovery_for = detect_reset_recovery(old, window, now, current)
 
         direction = None
+        silent_recovery = False
         if current_rank > notified_rank:
             direction = "down"
-        elif NOTIFY_RECOVERY and notified_rank > 0 and current_rank < notified_rank:
-            direction = "up"
+        elif notified_rank > current_rank:
+            if NOTIFY_RECOVERY:
+                direction = "up"
+            else:
+                # Recovery alerts may be disabled, but the notification baseline
+                # still has to follow the recovered quota. Otherwise an old
+                # exhausted/critical state suppresses alerts in the next cycle.
+                silent_recovery = True
         elif NOTIFY_RECOVERY and reset_recovery_for:
             direction = "up"
 
@@ -724,6 +731,8 @@ def process_group(state, group):
             "reset": window.get("reset"),
             "last_seen": int(time.time()),
         }
+        if silent_recovery:
+            prev_windows[wid]["notified_severity"] = current
         if reset_recovery_for:
             prev_windows[wid]["pending_reset_recovery_for"] = reset_recovery_for
 

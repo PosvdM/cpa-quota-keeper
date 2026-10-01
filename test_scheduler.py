@@ -296,6 +296,51 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertIn("5h 20%", sent[0][0])
 
+    def test_quiet_recovery_resets_notification_baseline(self):
+        state = {
+            "groups": {
+                "test:quiet-recovery": {
+                    "windows": {
+                        "five-hour": {
+                            "severity": "exhausted",
+                            "notified_severity": "exhausted",
+                            "remaining": 0.0,
+                            "reset": None,
+                        }
+                    }
+                }
+            }
+        }
+        group = {
+            "key": "test:quiet-recovery",
+            "label": "Test",
+            "windows": [
+                {"id": "five-hour", "label": "5 小时", "remaining": 100.0, "reset": None}
+            ],
+        }
+        old_recovery = watcher.NOTIFY_RECOVERY
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.NOTIFY_RECOVERY = False
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+
+            watcher.process_group(state, group)
+            self.assertEqual(sent, [])
+            window_state = state["groups"]["test:quiet-recovery"]["windows"]["five-hour"]
+            self.assertEqual(window_state["notified_severity"], "normal")
+
+            group["windows"][0]["remaining"] = 49.0
+            watcher.process_group(state, group)
+        finally:
+            watcher.NOTIFY_RECOVERY = old_recovery
+            watcher.send_bark = old_send
+
+        self.assertEqual(len(sent), 1)
+        self.assertIn("5h 49%", sent[0][0])
+        window_state = state["groups"]["test:quiet-recovery"]["windows"]["five-hour"]
+        self.assertEqual(window_state["notified_severity"], "notice")
+
 
 if __name__ == "__main__":
     unittest.main()
