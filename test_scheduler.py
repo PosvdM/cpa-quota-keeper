@@ -77,6 +77,27 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(title, "⚠️ Claude · 7d 48%")
         self.assertNotIn("CPA", title)
 
+    def test_notification_title_includes_approximate_reset(self):
+        reset = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+        group = {
+            "label": "ChatGPT#eg",
+            "windows": [
+                {"id": "five-hour", "label": "5 小时", "remaining": 26.0, "reset": reset},
+            ],
+        }
+        changes = [
+            {
+                "id": "five-hour",
+                "label": "5 小时",
+                "from": "normal",
+                "to": "notice",
+                "direction": "down",
+                "remaining": 26.0,
+            }
+        ]
+        title, _, _ = watcher.build_notification(group, changes)
+        self.assertEqual(title, "⚠️ ChatGPT#eg · 5h 26% | 05h")
+
     def test_chatgpt_account_labels_are_generated_from_email(self):
         a = {
             "provider": "codex",
@@ -90,8 +111,8 @@ class SchedulerTests(unittest.TestCase):
             "email": "bob.team@example.net",
             "name": "codex-7b0a37c4-bob.team@example.net-team.json",
         }
-        self.assertEqual(scheduler.credential_label(a, 1, 2), "ChatGPT#al~rk")
-        self.assertEqual(scheduler.credential_label(b, 2, 2), "ChatGPT#bo~am")
+        self.assertEqual(scheduler.credential_label(a, 1, 2), "ChatGPT#rk")
+        self.assertEqual(scheduler.credential_label(b, 2, 2), "ChatGPT#am")
 
     def test_single_account_provider_has_no_suffix(self):
         a = {

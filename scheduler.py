@@ -386,10 +386,8 @@ def masked_account_id(file, ordinal):
     if not email:
         return str(ordinal)
     local = email.split("@", 1)[0]
-    if len(local) >= 4:
-        return f"{local[:2]}~{local[-2:]}"
     if len(local) >= 2:
-        return f"{local[0]}~{local[-1]}"
+        return local[-2:]
     return local or str(ordinal)
 
 

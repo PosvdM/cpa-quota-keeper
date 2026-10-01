@@ -555,10 +555,17 @@ def build_notification(group, changes):
     recovering = [c for c in changes if c["direction"] == "up"]
     if worsening:
         worst = max(worsening, key=lambda c: SEVERITY_RANK[c["to"]])
-        labels = " / ".join(
-            f"{short_window_label(c['label'])} {round(c['remaining'])}%"
-            for c in worsening
-        )
+        windows_by_id = {window.get("id"): window for window in group.get("windows", [])}
+        label_parts = []
+        now = datetime.now(timezone.utc)
+        for change in worsening:
+            text = f"{short_window_label(change['label'])} {round(change['remaining'])}%"
+            window = windows_by_id.get(change.get("id"))
+            reset_dt = parse_time(window.get("reset")) if isinstance(window, dict) else None
+            if reset_dt:
+                text += f" | {format_compact_duration((reset_dt - now).total_seconds())}"
+            label_parts.append(text)
+        labels = " / ".join(label_parts)
         prefix = "🔴" if worst["to"] in {"critical", "exhausted"} else "⚠️"
         title = f"{prefix} {group['label']} · {labels}"
         level = "timeSensitive" if worst["to"] in {"critical", "exhausted"} else "active"
