@@ -620,7 +620,7 @@ def detect_reset_recovery(old, window, now, current_severity):
     return None
 
 
-def send_bark(title, body, level):
+def send_bark(title, body, level, jump_url=None):
     if not BARK_URL:
         log(f"Bark 未配置，跳过推送：{title}")
         return False
@@ -629,6 +629,8 @@ def send_bark(title, body, level):
     params = {"group": BARK_GROUP, "level": level}
     if BARK_ICON:
         params["icon"] = BARK_ICON
+    if jump_url:
+        params["url"] = str(jump_url)
     url = f"{BARK_URL}/{path}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={"User-Agent": "cpa-quota-keeper/1.0"})
     try:
