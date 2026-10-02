@@ -62,6 +62,11 @@ def load_keeper_config():
 KEEPER_CONFIG = load_keeper_config()
 WINDOW_CONFIG = KEEPER_CONFIG.get("window_ignition") if isinstance(KEEPER_CONFIG.get("window_ignition"), dict) else {}
 PROVIDERS_CONFIG = KEEPER_CONFIG.get("providers") if isinstance(KEEPER_CONFIG.get("providers"), dict) else {}
+RESET_UPDATES_CONFIG = (
+    KEEPER_CONFIG.get("codex_reset_updates")
+    if isinstance(KEEPER_CONFIG.get("codex_reset_updates"), dict)
+    else {}
+)
 
 
 def _window_int(key, env_key, default, minimum=None, maximum=None):
@@ -105,6 +110,23 @@ IGNITE_END_GRACE_MINUTES = _window_int("end_grace_minutes", "IGNITE_END_GRACE_MI
 IGNITE_GRACE_SECONDS = _window_int("grace_seconds", "IGNITE_GRACE_SECONDS", 3, 0)
 IGNITE_FAILURE_RETRY_SECONDS = _window_int("failure_retry_seconds", "IGNITE_FAILURE_RETRY_SECONDS", 300, 60)
 IGNITE_POST_SUCCESS_HOLD_SECONDS = _window_int("post_success_hold_seconds", "IGNITE_POST_SUCCESS_HOLD_SECONDS", 60, 15)
+
+CODEX_RESET_UPDATES_ENABLED = _bool_value(
+    RESET_UPDATES_CONFIG.get("enabled"),
+    os.getenv("CODEX_RESET_UPDATES_ENABLED", "false").lower() not in {"0", "false", "no", "off"},
+)
+CODEX_RESET_UPDATES_POLL_SECONDS = max(
+    300,
+    int(RESET_UPDATES_CONFIG.get("poll_seconds") or os.getenv("CODEX_RESET_UPDATES_POLL_SECONDS", "300")),
+)
+CODEX_RESET_UPDATES_NOTIFY_CURRENT_PENDING = _bool_value(
+    RESET_UPDATES_CONFIG.get("notify_current_pending"),
+    True,
+)
+DID_CODEX_RESET_API_URL = os.getenv(
+    "DID_CODEX_RESET_API_URL",
+    "https://didcodexreset.com/openapi/v1/records?kind=all&page=1&pageSize=10",
+).strip()
 
 # Some providers expose an unstarted 5-hour window as a rolling placeholder:
 # reset_at stays about 5 hours ahead of now and moves forward with each poll.
@@ -937,6 +959,147 @@ def schedule_summary(accounts, state):
     return "；".join(parts)
 
 
+def _reset_type_label(value):
+    return {
+        "global": "全局重置",
+        "banked": "重置卡",
+        "global_and_banked": "全局重置 + 重置卡",
+    }.get(str(value or "").strip().lower(), "Codex 重置")
+
+
+def _scope_label(scope):
+    if not isinstance(scope, dict):
+        return ""
+    plans = scope.get("plans")
+    if not isinstance(plans, list) or not plans:
+        return ""
+    normalized = [str(item).strip().lower() for item in plans if str(item).strip()]
+    if "all" in normalized:
+        return "全部套餐"
+    names = {
+        "plus": "Plus",
+        "pro": "Pro",
+        "business": "Business",
+        "team": "Team",
+        "enterprise": "Enterprise",
+    }
+    return " · ".join(names.get(item, item) for item in normalized)
+
+
+def _format_reset_event_time(value):
+    dt = watcher.parse_time(value)
+    if not dt:
+        return ""
+    return dt.astimezone(watcher.LOCAL_TZ).strftime("%m/%d %H:%M")
+
+
+def build_codex_reset_notification(record):
+    kind = str(record.get("kind") or "").strip().lower()
+    reset_type = _reset_type_label(record.get("resetType"))
+    confidence = record.get("confidence")
+    try:
+        confidence_text = f"{round(float(confidence) * 100)}%"
+    except (TypeError, ValueError):
+        confidence_text = ""
+
+    if kind == "reset_scheduled":
+        title = f"📅 Codex {reset_type}已排期"
+        time_text = _format_reset_event_time(record.get("effectiveAt"))
+        lines = []
+        if time_text:
+            lines.append(f"预计：{time_text}")
+        if confidence_text:
+            lines.append(f"置信度：{confidence_text}")
+    else:
+        suffix = "已到账" if record.get("resetType") == "banked" else "已完成"
+        title = f"✅ Codex {reset_type}{suffix}"
+        time_text = _format_reset_event_time(
+            record.get("effectiveAt") or record.get("completedAt") or record.get("announcedAt")
+        )
+        lines = []
+        if time_text:
+            lines.append(f"时间：{time_text}")
+        if confidence_text:
+            lines.append(f"置信度：{confidence_text}")
+
+    scope_text = _scope_label(record.get("scope"))
+    if scope_text:
+        lines.append(f"范围：{scope_text}")
+    source = record.get("source") if isinstance(record.get("source"), dict) else {}
+    handle = str(source.get("handle") or "").strip()
+    if handle:
+        lines.append(f"来源：@{handle}")
+    return title, "\n".join(lines) or "Did Codex Reset 发布了新的重置信号", "active"
+
+
+def fetch_codex_reset_records():
+    payload = watcher.http_json(
+        DID_CODEX_RESET_API_URL,
+        headers={"User-Agent": "cpa-quota-keeper/1.0", "Accept": "application/json"},
+    )
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        raise RuntimeError("Did Codex Reset API 返回异常")
+    data = payload.get("data")
+    items = data.get("items") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise RuntimeError("Did Codex Reset API 缺少 records")
+    return [item for item in items if isinstance(item, dict) and str(item.get("id") or "").strip()]
+
+
+def process_codex_reset_records(state, records):
+    root = state.setdefault("codex_reset_updates", {})
+    initialized = bool(root.get("initialized"))
+    seen = {str(item) for item in root.get("seen_ids", []) if str(item)}
+    candidates = []
+
+    if not initialized:
+        root["initialized"] = True
+        pending_id = None
+        if CODEX_RESET_UPDATES_NOTIFY_CURRENT_PENDING:
+            for record in records:
+                if record.get("kind") == "reset_scheduled" and record.get("scheduleState") == "pending":
+                    pending_id = str(record.get("id"))
+                    candidates.append(record)
+                    break
+        for record in records:
+            rid = str(record.get("id"))
+            if rid and rid != pending_id:
+                seen.add(rid)
+    else:
+        candidates = [record for record in records if str(record.get("id")) not in seen]
+        candidates.reverse()
+
+    sent = 0
+    for record in candidates:
+        rid = str(record.get("id"))
+        title, body, level = build_codex_reset_notification(record)
+        if watcher.send_bark(title, body, level):
+            seen.add(rid)
+            sent += 1
+
+    ordered = []
+    for record in records:
+        rid = str(record.get("id"))
+        if rid in seen and rid not in ordered:
+            ordered.append(rid)
+    for rid in root.get("seen_ids", []):
+        rid = str(rid)
+        if rid in seen and rid not in ordered:
+            ordered.append(rid)
+    root["seen_ids"] = ordered[:100]
+    root["last_check_epoch"] = int(time.time())
+    return sent
+
+
+def poll_codex_reset_updates(state):
+    records = fetch_codex_reset_records()
+    sent = process_codex_reset_records(state, records)
+    watcher.save_state(state)
+    if sent:
+        watcher.log(f"Did Codex Reset：已发送 {sent} 条 Bark 通知")
+    return sent
+
+
 def process_groups(state, groups):
     groups_state = state.setdefault("groups", {})
     for group in groups:
@@ -1101,8 +1264,16 @@ def main():
 
     accounts = []
     next_poll = 0.0
+    next_reset_updates_poll = 0.0
     while True:
         now_epoch = time.time()
+        if CODEX_RESET_UPDATES_ENABLED and now_epoch >= next_reset_updates_poll:
+            try:
+                poll_codex_reset_updates(state)
+            except Exception as exc:
+                watcher.log(f"Did Codex Reset 检查失败：{exc}")
+            next_reset_updates_poll = time.time() + CODEX_RESET_UPDATES_POLL_SECONDS
+
         if now_epoch >= next_poll or not accounts:
             try:
                 accounts = poll(client, state)
@@ -1121,6 +1292,8 @@ def main():
                 next_poll = time.time() + watcher.POLL_INTERVAL
 
         sleep_for = next_wakeup(accounts, state, next_poll) if accounts else min(60, watcher.POLL_INTERVAL)
+        if CODEX_RESET_UPDATES_ENABLED:
+            sleep_for = min(sleep_for, max(1.0, next_reset_updates_poll - time.time()))
         time.sleep(sleep_for)
 
 
