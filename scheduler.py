@@ -106,6 +106,17 @@ IGNITE_GRACE_SECONDS = _window_int("grace_seconds", "IGNITE_GRACE_SECONDS", 3, 0
 IGNITE_FAILURE_RETRY_SECONDS = _window_int("failure_retry_seconds", "IGNITE_FAILURE_RETRY_SECONDS", 300, 60)
 IGNITE_POST_SUCCESS_HOLD_SECONDS = _window_int("post_success_hold_seconds", "IGNITE_POST_SUCCESS_HOLD_SECONDS", 60, 15)
 
+# Some providers expose an unstarted 5-hour window as a rolling placeholder:
+# reset_at stays about 5 hours ahead of now and moves forward with each poll.
+# A real started window has a fixed reset_at even if the displayed remaining
+# percentage still rounds to 100%. Detect the behavior from two observations.
+ROLLING_RESET_WINDOW_SECONDS = 5 * 3600
+ROLLING_RESET_MIN_REMAINING = 99.5
+ROLLING_RESET_OFFSET_TOLERANCE_SECONDS = 120
+ROLLING_RESET_MIN_OBSERVATION_SECONDS = 2
+ROLLING_RESET_DRIFT_TOLERANCE_SECONDS = 3
+ROLLING_RESET_MAX_DRIFT_TOLERANCE_SECONDS = 10
+
 TRIGGER_PROMPT = (
     "This is an automated quota-window trigger. "
     "Reply with exactly OK. No explanation. Do not use tools or perform any other task."
@@ -825,12 +836,87 @@ def next_daily_start(now_utc):
     return start.astimezone(timezone.utc)
 
 
+def observe_reset_behavior(state, account, now_utc):
+    item = scheduler_state(state, account["id"])
+    previous_flag = item.get("rolling_reset")
+    previous = item.get("reset_observation")
+    if not isinstance(previous, dict):
+        previous = {}
+
+    reset_dt = watcher.parse_time(account.get("reset"))
+    try:
+        remaining = float(account.get("remaining"))
+    except (TypeError, ValueError):
+        remaining = -1.0
+
+    now_epoch = now_utc.timestamp()
+    rolling = False
+    reset_epoch = reset_dt.timestamp() if reset_dt else None
+    if reset_epoch is not None:
+        offset = reset_epoch - now_epoch
+        previous_seen = previous.get("seen_epoch")
+        previous_reset = previous.get("reset_epoch")
+        try:
+            previous_seen = float(previous_seen)
+            previous_reset = float(previous_reset)
+        except (TypeError, ValueError):
+            previous_seen = previous_reset = None
+
+        if (
+            remaining >= ROLLING_RESET_MIN_REMAINING
+            and abs(offset - ROLLING_RESET_WINDOW_SECONDS) <= ROLLING_RESET_OFFSET_TOLERANCE_SECONDS
+            and previous_seen is not None
+            and previous_reset is not None
+        ):
+            elapsed = now_epoch - previous_seen
+            reset_shift = reset_epoch - previous_reset
+            if elapsed >= ROLLING_RESET_MIN_OBSERVATION_SECONDS:
+                tolerance = min(
+                    ROLLING_RESET_MAX_DRIFT_TOLERANCE_SECONDS,
+                    max(ROLLING_RESET_DRIFT_TOLERANCE_SECONDS, elapsed * 0.02),
+                )
+                rolling = abs(reset_shift - elapsed) <= tolerance
+
+    item["rolling_reset"] = rolling
+    item["reset_observation"] = {
+        "seen_epoch": now_epoch,
+        "reset_epoch": reset_epoch,
+        "remaining": remaining,
+    }
+    if rolling and previous_flag is not True:
+        watcher.log(f"检测到滑动 5h 重置占位：{account['label']}，允许按日间窗口点火")
+    elif previous_flag is True and not rolling:
+        watcher.log(f"检测到固定 5h 重置时间：{account['label']}，恢复按 reset_at 调度")
+    return rolling
+
+
+def observe_accounts(state, accounts, now_utc=None):
+    now_utc = now_utc or datetime.now(timezone.utc)
+    for account in accounts:
+        observe_reset_behavior(state, account, now_utc)
+
+
+def held_until(item, now_utc):
+    last_success = float(item.get("last_success_epoch") or 0)
+    if last_success and now_utc.timestamp() < last_success + IGNITE_POST_SUCCESS_HOLD_SECONDS:
+        return datetime.fromtimestamp(last_success + IGNITE_POST_SUCCESS_HOLD_SECONDS, timezone.utc)
+    retry_at = float(item.get("retry_at_epoch") or 0)
+    if retry_at > now_utc.timestamp():
+        return datetime.fromtimestamp(retry_at, timezone.utc)
+    return None
+
+
 def due_at(account, state, now_utc):
     local_now, start, end = local_bounds(now_utc)
     if local_now < start:
         return start.astimezone(timezone.utc)
     if local_now > end:
         return next_daily_start(now_utc)
+
+    item = scheduler_state(state, account["id"])
+    hold = held_until(item, now_utc)
+    if item.get("rolling_reset") is True:
+        return hold or now_utc
 
     reset_dt = watcher.parse_time(account.get("reset"))
     if reset_dt and reset_dt > now_utc:
@@ -840,14 +926,7 @@ def due_at(account, state, now_utc):
             return target
         return next_daily_start(now_utc)
 
-    item = scheduler_state(state, account["id"])
-    last_success = float(item.get("last_success_epoch") or 0)
-    if last_success and now_utc.timestamp() < last_success + IGNITE_POST_SUCCESS_HOLD_SECONDS:
-        return datetime.fromtimestamp(last_success + IGNITE_POST_SUCCESS_HOLD_SECONDS, timezone.utc)
-    retry_at = float(item.get("retry_at_epoch") or 0)
-    if retry_at > now_utc.timestamp():
-        return datetime.fromtimestamp(retry_at, timezone.utc)
-    return now_utc
+    return hold or now_utc
 
 
 def schedule_summary(accounts, state):
@@ -892,6 +971,7 @@ def poll(client, state):
     groups, accounts, errors = collect(client)
     if not groups:
         raise RuntimeError("；".join(errors) if errors else "没有读取到任何额度")
+    observe_accounts(state, accounts)
     process_groups(state, groups)
     if errors:
         watcher.log("部分额度刷新失败：" + "；".join(errors))
