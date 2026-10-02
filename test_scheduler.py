@@ -408,6 +408,41 @@ class SchedulerTests(unittest.TestCase):
         finally:
             scheduler.PROVIDERS_CONFIG = old
 
+    def test_antigravity_claude_gpt_prefers_non_thinking_claude_over_gpt_oss(self):
+        account = {
+            "provider": "antigravity",
+            "group_label": "Claude / GPT",
+            "file": {"provider": "antigravity", "auth_index": "auth-AG"},
+        }
+        old_models_for = scheduler.models_for
+        try:
+            scheduler.models_for = lambda client, file: [
+                "claude-opus-4-6-thinking",
+                "claude-sonnet-4-6",
+                "gpt-oss-120b-medium",
+            ]
+            selected = scheduler.choose_model(object(), account)
+        finally:
+            scheduler.models_for = old_models_for
+        self.assertEqual(selected, "claude-sonnet-4-6")
+
+    def test_antigravity_claude_gpt_keeps_gpt_oss_as_non_thinking_fallback(self):
+        account = {
+            "provider": "antigravity",
+            "group_label": "Claude / GPT",
+            "file": {"provider": "antigravity", "auth_index": "auth-AG"},
+        }
+        old_models_for = scheduler.models_for
+        try:
+            scheduler.models_for = lambda client, file: [
+                "claude-opus-4-6-thinking",
+                "gpt-oss-120b-medium",
+            ]
+            selected = scheduler.choose_model(object(), account)
+        finally:
+            scheduler.models_for = old_models_for
+        self.assertEqual(selected, "gpt-oss-120b-medium")
+
     def test_antigravity_ignite_uses_exact_auth(self):
         class FakeClient:
             def __init__(self):
