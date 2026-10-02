@@ -55,6 +55,26 @@ class SchedulerTests(unittest.TestCase):
         due = scheduler.due_at(account, state, second)
         self.assertEqual(due, datetime(2026, 9, 28, 6, 0, 3, tzinfo=timezone.utc))
 
+    def test_rolling_reset_after_success_waits_one_window(self):
+        state = {
+            "scheduler": {
+                "antigravity:test": {
+                    "rolling_reset": True,
+                    "last_success_epoch": datetime(2026, 9, 28, 6, 0, 0, tzinfo=timezone.utc).timestamp(),
+                }
+            }
+        }
+        account = {
+            "id": "antigravity:test",
+            "provider": "antigravity",
+            "label": "Gemini",
+            "remaining": 100.0,
+            "reset": "2026-09-28T11:05:00+00:00",
+        }
+        now = datetime(2026, 9, 28, 6, 1, 0, tzinfo=timezone.utc)
+        due = scheduler.due_at(account, state, now)
+        self.assertEqual(due, datetime(2026, 9, 28, 11, 0, 3, tzinfo=timezone.utc))
+
     def test_rolling_reset_detection_requires_full_quota(self):
         state = {}
         account = {
