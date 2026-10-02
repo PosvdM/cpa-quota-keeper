@@ -443,6 +443,72 @@ class SchedulerTests(unittest.TestCase):
             scheduler.models_for = old_models_for
         self.assertEqual(selected, "gpt-oss-120b-medium")
 
+    def test_codex_uses_newest_luna_then_older_luna(self):
+        account = {
+            "provider": "codex",
+            "file": {"provider": "codex", "auth_index": "auth-CX"},
+        }
+        old_models_for = scheduler.models_for
+        try:
+            scheduler.models_for = lambda client, file: [
+                "gpt-5.6-luna",
+                "gpt-6-luna",
+                "gpt-6.1-luna",
+                "gpt-6.2-sol",
+            ]
+            self.assertEqual(scheduler.choose_model(object(), account), "gpt-6.1-luna")
+            scheduler.models_for = lambda client, file: ["gpt-5.6-luna", "gpt-6-luna"]
+            self.assertEqual(scheduler.choose_model(object(), account), "gpt-6-luna")
+        finally:
+            scheduler.models_for = old_models_for
+
+    def test_claude_uses_newest_haiku_then_older_haiku(self):
+        account = {
+            "provider": "claude",
+            "file": {"provider": "claude", "auth_index": "auth-CL"},
+        }
+        old_models_for = scheduler.models_for
+        try:
+            scheduler.models_for = lambda client, file: [
+                "claude-3-5-haiku-20241022",
+                "claude-haiku-4-5-20251001",
+                "claude-haiku-5-20261001",
+                "claude-sonnet-5-5",
+            ]
+            self.assertEqual(scheduler.choose_model(object(), account), "claude-haiku-5-20261001")
+            scheduler.models_for = lambda client, file: [
+                "claude-3-5-haiku-20241022",
+                "claude-haiku-4-5-20251001",
+            ]
+            self.assertEqual(scheduler.choose_model(object(), account), "claude-haiku-4-5-20251001")
+        finally:
+            scheduler.models_for = old_models_for
+
+    def test_antigravity_gemini_uses_newest_flash_then_older_flash(self):
+        account = {
+            "provider": "antigravity",
+            "group_label": "Gemini",
+            "file": {"provider": "antigravity", "auth_index": "auth-AG"},
+        }
+        old_models_for = scheduler.models_for
+        try:
+            scheduler.models_for = lambda client, file: [
+                "gemini-3.5-flash-lite",
+                "gemini-3.6-flash-high",
+                "gemini-3.8-flash-high",
+                "gemini-3.7-flash-high",
+                "gemini-4-pro",
+                "gemini-3.9-flash-image",
+            ]
+            self.assertEqual(scheduler.choose_model(object(), account), "gemini-3.8-flash-high")
+            scheduler.models_for = lambda client, file: [
+                "gemini-3.5-flash-lite",
+                "gemini-3.7-flash-high",
+            ]
+            self.assertEqual(scheduler.choose_model(object(), account), "gemini-3.7-flash-high")
+        finally:
+            scheduler.models_for = old_models_for
+
     def test_antigravity_claude_gpt_auto_ignition_is_off_by_default(self):
         old = scheduler.PROVIDERS_CONFIG
         try:
