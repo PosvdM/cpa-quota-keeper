@@ -137,6 +137,7 @@ class SchedulerTests(unittest.TestCase):
         self.assertIn("预计：10/03 02:00", body)
         self.assertIn("置信度：95%", body)
         self.assertIn("范围：全部套餐", body)
+        self.assertNotIn("来源：", body)
         self.assertEqual(level, "active")
 
     def test_codex_reset_first_run_only_notifies_current_pending(self):
@@ -168,6 +169,61 @@ class SchedulerTests(unittest.TestCase):
         self.assertIn("已排期", sent[0][0])
         self.assertIn("schedule-1", state["codex_reset_updates"]["seen_ids"])
         self.assertIn("old-completed", state["codex_reset_updates"]["seen_ids"])
+
+    def test_codex_reset_manual_record_id_rotation_does_not_duplicate(self):
+        state = {
+            "codex_reset_updates": {
+                "initialized": True,
+                "stable_key_migrated": True,
+                "seen_keys": [],
+            }
+        }
+        first_record = {
+            "id": "manual:cl_first",
+            "kind": "reset_completed",
+            "resetType": "banked",
+            "effectiveAt": "2026-09-22T20:37:00.000Z",
+            "completedAt": "2026-09-22T20:37:00.000Z",
+            "scope": {"plans": ["all"]},
+        }
+        second_record = dict(first_record, id="manual:cl_second")
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            first = scheduler.process_codex_reset_records(state, [first_record])
+            second = scheduler.process_codex_reset_records(state, [second_record])
+        finally:
+            watcher.send_bark = old_send
+        self.assertEqual(first, 1)
+        self.assertEqual(second, 0)
+        self.assertEqual(len(sent), 1)
+
+    def test_codex_reset_id_only_state_migrates_manual_history_without_push(self):
+        state = {
+            "codex_reset_updates": {
+                "initialized": True,
+                "seen_ids": ["manual:cl_old"],
+            }
+        }
+        record = {
+            "id": "manual:cl_rotated",
+            "kind": "reset_completed",
+            "resetType": "banked",
+            "effectiveAt": "2026-09-22T20:37:00.000Z",
+            "completedAt": "2026-09-22T20:37:00.000Z",
+            "scope": {"plans": ["all"]},
+        }
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            count = scheduler.process_codex_reset_records(state, [record])
+        finally:
+            watcher.send_bark = old_send
+        self.assertEqual(count, 0)
+        self.assertEqual(sent, [])
+        self.assertTrue(state["codex_reset_updates"]["stable_key_migrated"])
 
     def test_codex_reset_new_record_is_deduplicated(self):
         state = {
