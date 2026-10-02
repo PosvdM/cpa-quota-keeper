@@ -141,7 +141,8 @@ IGNITE_CONFIRM_DELAYS_SECONDS = (5, 10, 15, 30, 15)
 
 TRIGGER_PROMPT = (
     "This is an automated quota-window trigger. "
-    "Reply with exactly OK. No explanation. Do not use tools or perform any other task."
+    "Do not think, reason, deliberate, use tools, or perform any other task. "
+    "Reply with exactly OK and nothing else."
 )
 
 
@@ -662,7 +663,6 @@ def ignite_codex(client, account, model):
     headers.update({"Accept": "text/event-stream", "Originator": "codex-tui"})
     body = {
         "model": model,
-        "instructions": "Reply with exactly OK. No explanation. Do not use tools.",
         "input": [{"role": "user", "content": [{"type": "input_text", "text": TRIGGER_PROMPT}]}],
         "reasoning": {"effort": "none"},
         "tools": [],
