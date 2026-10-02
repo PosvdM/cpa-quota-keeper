@@ -68,7 +68,7 @@ docker logs -f cpa-quota-keeper
 
 - ChatGPT / Codex：最新 **Luna**。
 - Claude：最新非 thinking **Haiku**。
-- Antigravity / Gemini：最新非 image **Flash**；没有 Flash 时再选择最新非 Pro Gemini。
+- Antigravity / Gemini：最新非 image **Flash** 优先，按版本向旧版顺延；没有 Flash 时先尝试其他非 Pro Gemini，最后再使用最新 Pro。
 - Antigravity / Claude / GPT（默认不点火）：Haiku → Sonnet → Opus → GPT-OSS → 其他非 thinking 文本模型。
 - Grok / xAI：优先名称含 `fast`、`mini` 的文本模型。
 
