@@ -443,6 +443,29 @@ class SchedulerTests(unittest.TestCase):
             scheduler.models_for = old_models_for
         self.assertEqual(selected, "gpt-oss-120b-medium")
 
+    def test_antigravity_claude_gpt_auto_ignition_is_off_by_default(self):
+        old = scheduler.PROVIDERS_CONFIG
+        try:
+            scheduler.PROVIDERS_CONFIG = {"antigravity": {"monitor": True, "ignite": True}}
+            group = {"source_label": "Claude / GPT", "label": "Claude / GPT"}
+            self.assertFalse(scheduler.group_ignition_enabled("antigravity", group))
+        finally:
+            scheduler.PROVIDERS_CONFIG = old
+
+    def test_claude_fable_5_window_is_monitor_only(self):
+        group = {
+            "label": "Claude",
+            "windows": [
+                {
+                    "id": "seven-day-fable-5",
+                    "label": "7 Day Fable 5",
+                    "period_hours": 168,
+                    "remaining": 100.0,
+                }
+            ],
+        }
+        self.assertIsNone(scheduler.five_hour_window(group))
+
     def test_antigravity_ignite_uses_exact_auth(self):
         class FakeClient:
             def __init__(self):
