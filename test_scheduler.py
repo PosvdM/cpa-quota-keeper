@@ -22,6 +22,53 @@ class SchedulerTests(unittest.TestCase):
         due = self.due(now, "2026-09-28T04:00:00+00:00")
         self.assertEqual(due.strftime("%Y-%m-%d %H:%M:%S"), "2026-09-28 12:00:03")
 
+    def test_rolling_reset_is_detected_from_two_observations(self):
+        state = {}
+        account = {
+            "id": "codex:test",
+            "provider": "codex",
+            "label": "ChatGPT",
+            "remaining": 100.0,
+            "reset": "2026-09-28T06:00:00+00:00",
+        }
+        first = datetime(2026, 9, 28, 1, 0, 0, tzinfo=timezone.utc)
+        self.assertFalse(scheduler.observe_reset_behavior(state, account, first))
+        account["reset"] = "2026-09-28T06:05:00+00:00"
+        second = first + timedelta(minutes=5)
+        self.assertTrue(scheduler.observe_reset_behavior(state, account, second))
+        due = scheduler.due_at(account, state, second)
+        self.assertEqual(due, second)
+
+    def test_fixed_reset_at_100_percent_is_not_treated_as_unstarted(self):
+        state = {}
+        account = {
+            "id": "claude:test",
+            "provider": "claude",
+            "label": "Claude",
+            "remaining": 100.0,
+            "reset": "2026-09-28T06:00:00+00:00",
+        }
+        first = datetime(2026, 9, 28, 1, 0, 0, tzinfo=timezone.utc)
+        scheduler.observe_reset_behavior(state, account, first)
+        second = first + timedelta(seconds=10)
+        self.assertFalse(scheduler.observe_reset_behavior(state, account, second))
+        due = scheduler.due_at(account, state, second)
+        self.assertEqual(due, datetime(2026, 9, 28, 6, 0, 3, tzinfo=timezone.utc))
+
+    def test_rolling_reset_detection_requires_full_quota(self):
+        state = {}
+        account = {
+            "id": "test:not-full",
+            "provider": "codex",
+            "label": "Test",
+            "remaining": 99.0,
+            "reset": "2026-09-28T06:00:00+00:00",
+        }
+        first = datetime(2026, 9, 28, 1, 0, 0, tzinfo=timezone.utc)
+        scheduler.observe_reset_behavior(state, account, first)
+        account["reset"] = "2026-09-28T06:05:00+00:00"
+        self.assertFalse(scheduler.observe_reset_behavior(state, account, first + timedelta(minutes=5)))
+
     def test_skips_overnight_reset(self):
         now = datetime(2026, 9, 28, 22, 0, tzinfo=self.TZ)
         due = self.due(now, "2026-09-28T19:00:00+00:00")
