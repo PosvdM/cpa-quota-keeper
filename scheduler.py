@@ -1025,10 +1025,6 @@ def build_codex_reset_notification(record):
     scope_text = _scope_label(record.get("scope"))
     if scope_text:
         lines.append(f"范围：{scope_text}")
-    source = record.get("source") if isinstance(record.get("source"), dict) else {}
-    handle = str(source.get("handle") or "").strip()
-    if handle:
-        lines.append(f"来源：@{handle}")
     return title, "\n".join(lines) or "Did Codex Reset 发布了新的重置信号", "active"
 
 
@@ -1046,47 +1042,89 @@ def fetch_codex_reset_records():
     return [item for item in items if isinstance(item, dict) and str(item.get("id") or "").strip()]
 
 
+def codex_reset_record_key(record):
+    rid = str(record.get("id") or "").strip()
+    if rid and not rid.startswith("manual:"):
+        return f"id:{rid}"
+
+    scope = record.get("scope") if isinstance(record.get("scope"), dict) else {}
+    plans = scope.get("plans") if isinstance(scope.get("plans"), list) else []
+    windows = scope.get("windows") if isinstance(scope.get("windows"), list) else []
+    parts = [
+        str(record.get("kind") or ""),
+        str(record.get("resetType") or ""),
+        str(record.get("announcedAt") or ""),
+        str(record.get("effectiveAt") or ""),
+        str(record.get("completedAt") or ""),
+        str(record.get("scheduleState") or ""),
+        ",".join(sorted(str(item) for item in plans)),
+        ",".join(sorted(str(item) for item in windows)),
+    ]
+    return "manual:" + "|".join(parts)
+
+
 def process_codex_reset_records(state, records):
     root = state.setdefault("codex_reset_updates", {})
     initialized = bool(root.get("initialized"))
-    seen = {str(item) for item in root.get("seen_ids", []) if str(item)}
+    old_seen_ids = {str(item) for item in root.get("seen_ids", []) if str(item)}
+    seen_keys = {str(item) for item in root.get("seen_keys", []) if str(item)}
     candidates = []
+
+    # Migration from the original ID-only dedupe. The upstream API can rotate IDs
+    # for manual records while leaving the event itself unchanged, so ID-only
+    # dedupe caused the same historical reset-card events to be pushed repeatedly.
+    if initialized and not root.get("stable_key_migrated"):
+        for record in records:
+            rid = str(record.get("id") or "")
+            if rid in old_seen_ids or rid.startswith("manual:"):
+                seen_keys.add(codex_reset_record_key(record))
+        root["stable_key_migrated"] = True
 
     if not initialized:
         root["initialized"] = True
-        pending_id = None
+        root["stable_key_migrated"] = True
+        pending_key = None
         if CODEX_RESET_UPDATES_NOTIFY_CURRENT_PENDING:
             for record in records:
                 if record.get("kind") == "reset_scheduled" and record.get("scheduleState") == "pending":
-                    pending_id = str(record.get("id"))
+                    pending_key = codex_reset_record_key(record)
                     candidates.append(record)
                     break
         for record in records:
-            rid = str(record.get("id"))
-            if rid and rid != pending_id:
-                seen.add(rid)
+            key = codex_reset_record_key(record)
+            if key and key != pending_key:
+                seen_keys.add(key)
     else:
-        candidates = [record for record in records if str(record.get("id")) not in seen]
+        candidates = [record for record in records if codex_reset_record_key(record) not in seen_keys]
         candidates.reverse()
 
     sent = 0
     for record in candidates:
-        rid = str(record.get("id"))
+        key = codex_reset_record_key(record)
         title, body, level = build_codex_reset_notification(record)
         if watcher.send_bark(title, body, level):
-            seen.add(rid)
+            seen_keys.add(key)
             sent += 1
 
-    ordered = []
+    ordered_keys = []
     for record in records:
-        rid = str(record.get("id"))
-        if rid in seen and rid not in ordered:
-            ordered.append(rid)
-    for rid in root.get("seen_ids", []):
-        rid = str(rid)
-        if rid in seen and rid not in ordered:
-            ordered.append(rid)
-    root["seen_ids"] = ordered[:100]
+        key = codex_reset_record_key(record)
+        if key in seen_keys and key not in ordered_keys:
+            ordered_keys.append(key)
+    for key in root.get("seen_keys", []):
+        key = str(key)
+        if key in seen_keys and key not in ordered_keys:
+            ordered_keys.append(key)
+    root["seen_keys"] = ordered_keys[:100]
+
+    # Keep current upstream IDs for diagnostics/backward compatibility, but no
+    # longer use them as the source of truth for deduplication.
+    current_seen_ids = []
+    for record in records:
+        rid = str(record.get("id") or "")
+        if rid and codex_reset_record_key(record) in seen_keys and rid not in current_seen_ids:
+            current_seen_ids.append(rid)
+    root["seen_ids"] = current_seen_ids[:100]
     root["last_check_epoch"] = int(time.time())
     return sent
 
