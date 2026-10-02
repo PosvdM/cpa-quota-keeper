@@ -22,15 +22,17 @@ model = ""
 monitor = true
 ignite = true
 model = ""
+# Only Claude's 5-hour window can be auto-ignited. 7-day/Fable 5 windows are monitor-only.
 
 [providers.antigravity]
 monitor = true
 ignite = false
 model = ""
+# By default only the larger Gemini 5-hour bucket is eligible for auto ignition.
+# Add "Claude / GPT" explicitly if you really want to ignite that smaller bucket too.
+groups = ["Gemini"]
 
 # Antigravity can expose more than one independent 5-hour quota group.
-# Leave groups unset to ignite every 5-hour group when ignite = true.
-# groups = ["Gemini"]
 #
 # Optional per-group model overrides:
 # [providers.antigravity.models]
