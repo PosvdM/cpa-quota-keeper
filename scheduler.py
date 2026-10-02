@@ -630,10 +630,11 @@ def choose_model(client, account):
             selected = _first_matching(
                 scoped,
                 [
+                    lambda m: "haiku" in m and "thinking" not in m,
+                    lambda m: "sonnet" in m and "thinking" not in m,
+                    lambda m: "opus" in m and "thinking" not in m,
                     lambda m: "gpt-oss" in m,
-                    lambda m: "haiku" in m,
-                    lambda m: "sonnet" in m,
-                    lambda m: "opus" in m,
+                    lambda m: "thinking" not in m,
                 ],
             )
             if selected:
