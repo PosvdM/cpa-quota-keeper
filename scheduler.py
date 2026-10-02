@@ -1028,6 +1028,14 @@ def build_codex_reset_notification(record):
     return title, "\n".join(lines) or "Did Codex Reset 发布了新的重置信号", "active"
 
 
+def codex_reset_detail_url(record):
+    announced = watcher.parse_time(record.get("announcedAt"))
+    if not announced:
+        return None
+    millis = int(round(announced.timestamp() * 1000))
+    return f"https://didcodexreset.com/zh/history/{millis}.html"
+
+
 def fetch_codex_reset_records():
     payload = watcher.http_json(
         DID_CODEX_RESET_API_URL,
@@ -1102,7 +1110,8 @@ def process_codex_reset_records(state, records):
     for record in candidates:
         key = codex_reset_record_key(record)
         title, body, level = build_codex_reset_notification(record)
-        if watcher.send_bark(title, body, level):
+        jump_url = codex_reset_detail_url(record)
+        if watcher.send_bark(title, body, level, jump_url=jump_url):
             seen_keys.add(key)
             sent += 1
 
