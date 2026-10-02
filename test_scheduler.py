@@ -139,6 +139,11 @@ class SchedulerTests(unittest.TestCase):
         self.assertIn("范围：全部套餐", body)
         self.assertNotIn("来源：", body)
         self.assertEqual(level, "active")
+        self.assertEqual(
+            scheduler.codex_reset_detail_url({"announcedAt": "2026-10-02T02:14:51.000Z"}),
+            "https://didcodexreset.com/zh/history/1790907291000.html",
+        )
+        self.assertIsNone(scheduler.codex_reset_detail_url({"announcedAt": None}))
 
     def test_codex_reset_first_run_only_notifies_current_pending(self):
         records = [
@@ -160,15 +165,45 @@ class SchedulerTests(unittest.TestCase):
         old_send = watcher.send_bark
         sent = []
         try:
-            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            watcher.send_bark = lambda title, body, level, jump_url=None: sent.append((title, body, level, jump_url)) or True
             count = scheduler.process_codex_reset_records(state, records)
         finally:
             watcher.send_bark = old_send
         self.assertEqual(count, 1)
         self.assertEqual(len(sent), 1)
         self.assertIn("已排期", sent[0][0])
+        self.assertIsNone(sent[0][3])
         self.assertIn("schedule-1", state["codex_reset_updates"]["seen_ids"])
         self.assertIn("old-completed", state["codex_reset_updates"]["seen_ids"])
+
+    def test_codex_reset_notification_passes_detail_url_to_bark(self):
+        state = {
+            "codex_reset_updates": {
+                "initialized": True,
+                "stable_key_migrated": True,
+                "seen_keys": [],
+            }
+        }
+        record = {
+            "id": "new-scheduled",
+            "kind": "reset_scheduled",
+            "resetType": "global",
+            "announcedAt": "2026-10-02T02:14:51.000Z",
+            "effectiveAt": "2026-10-02T18:00:00.000Z",
+            "scheduleState": "pending",
+        }
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.send_bark = lambda title, body, level, jump_url=None: sent.append((title, body, level, jump_url)) or True
+            count = scheduler.process_codex_reset_records(state, [record])
+        finally:
+            watcher.send_bark = old_send
+        self.assertEqual(count, 1)
+        self.assertEqual(
+            sent[0][3],
+            "https://didcodexreset.com/zh/history/1790907291000.html",
+        )
 
     def test_codex_reset_manual_record_id_rotation_does_not_duplicate(self):
         state = {
@@ -190,7 +225,7 @@ class SchedulerTests(unittest.TestCase):
         old_send = watcher.send_bark
         sent = []
         try:
-            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            watcher.send_bark = lambda title, body, level, jump_url=None: sent.append((title, body, level, jump_url)) or True
             first = scheduler.process_codex_reset_records(state, [first_record])
             second = scheduler.process_codex_reset_records(state, [second_record])
         finally:
@@ -217,7 +252,7 @@ class SchedulerTests(unittest.TestCase):
         old_send = watcher.send_bark
         sent = []
         try:
-            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            watcher.send_bark = lambda title, body, level, jump_url=None: sent.append((title, body, level, jump_url)) or True
             count = scheduler.process_codex_reset_records(state, [record])
         finally:
             watcher.send_bark = old_send
@@ -239,7 +274,7 @@ class SchedulerTests(unittest.TestCase):
         old_send = watcher.send_bark
         sent = []
         try:
-            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            watcher.send_bark = lambda title, body, level, jump_url=None: sent.append((title, body, level, jump_url)) or True
             first = scheduler.process_codex_reset_records(state, records)
             second = scheduler.process_codex_reset_records(state, records)
         finally:
