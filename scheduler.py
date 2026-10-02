@@ -629,6 +629,9 @@ def choose_model(client, account):
             selected = _newest_matching(scoped, lambda m: "pro" not in m)
             if selected:
                 return selected
+            selected = _newest_matching(scoped, lambda m: "pro" in m)
+            if selected:
+                return selected
         if "claude" in group or "gpt" in group:
             scoped = [m for m in candidates if "claude" in m.lower() or "gpt" in m.lower()]
             selected = _first_matching(
