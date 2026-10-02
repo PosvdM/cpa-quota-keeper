@@ -122,6 +122,77 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(watcher.format_compact_duration(5 * 3600), "05h")
         self.assertEqual(watcher.format_compact_duration(30 * 60), "30m")
 
+    def test_codex_reset_scheduled_notification(self):
+        record = {
+            "id": "schedule-1",
+            "kind": "reset_scheduled",
+            "resetType": "global",
+            "effectiveAt": "2026-10-02T18:00:00+00:00",
+            "confidence": 0.95,
+            "scope": {"plans": ["all"], "windows": ["unknown"]},
+            "source": {"handle": "thsottiaux"},
+        }
+        title, body, level = scheduler.build_codex_reset_notification(record)
+        self.assertEqual(title, "📅 Codex 全局重置已排期")
+        self.assertIn("预计：10/03 02:00", body)
+        self.assertIn("置信度：95%", body)
+        self.assertIn("范围：全部套餐", body)
+        self.assertEqual(level, "active")
+
+    def test_codex_reset_first_run_only_notifies_current_pending(self):
+        records = [
+            {
+                "id": "schedule-1",
+                "kind": "reset_scheduled",
+                "resetType": "global",
+                "scheduleState": "pending",
+                "effectiveAt": "2026-10-02T18:00:00+00:00",
+            },
+            {
+                "id": "old-completed",
+                "kind": "reset_completed",
+                "resetType": "global",
+                "effectiveAt": "2026-09-30T18:00:00+00:00",
+            },
+        ]
+        state = {}
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            count = scheduler.process_codex_reset_records(state, records)
+        finally:
+            watcher.send_bark = old_send
+        self.assertEqual(count, 1)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("已排期", sent[0][0])
+        self.assertIn("schedule-1", state["codex_reset_updates"]["seen_ids"])
+        self.assertIn("old-completed", state["codex_reset_updates"]["seen_ids"])
+
+    def test_codex_reset_new_record_is_deduplicated(self):
+        state = {
+            "codex_reset_updates": {
+                "initialized": True,
+                "seen_ids": ["old-completed"],
+            }
+        }
+        records = [
+            {"id": "new-completed", "kind": "reset_completed", "resetType": "banked"},
+            {"id": "old-completed", "kind": "reset_completed", "resetType": "global"},
+        ]
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            first = scheduler.process_codex_reset_records(state, records)
+            second = scheduler.process_codex_reset_records(state, records)
+        finally:
+            watcher.send_bark = old_send
+        self.assertEqual(first, 1)
+        self.assertEqual(second, 0)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("重置卡已到账", sent[0][0])
+
     def test_notification_title_has_no_cpa_prefix(self):
         group = {
             "label": "Claude",
