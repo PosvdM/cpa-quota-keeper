@@ -12,6 +12,10 @@ class SchedulerTests(unittest.TestCase):
         account = {"id": "codex:test", "provider": "codex", "label": "Test", "reset": reset}
         return scheduler.due_at(account, {}, local_now.astimezone(timezone.utc)).astimezone(self.TZ)
 
+    def test_trigger_prompt_is_strict_and_unified(self):
+        self.assertIn("Do not think, reason, deliberate", scheduler.TRIGGER_PROMPT)
+        self.assertIn("Reply with exactly OK and nothing else.", scheduler.TRIGGER_PROMPT)
+
     def test_waits_for_daily_start(self):
         now = datetime(2026, 9, 28, 6, 59, tzinfo=self.TZ)
         due = self.due(now, "2026-09-27T20:00:00+00:00")
