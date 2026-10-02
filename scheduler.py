@@ -111,11 +111,11 @@ IGNITE_POST_SUCCESS_HOLD_SECONDS = _window_int("post_success_hold_seconds", "IGN
 # A real started window has a fixed reset_at even if the displayed remaining
 # percentage still rounds to 100%. Detect the behavior from two observations.
 ROLLING_RESET_WINDOW_SECONDS = 5 * 3600
-ROLLING_RESET_MIN_REMAINING = 99.5
 ROLLING_RESET_OFFSET_TOLERANCE_SECONDS = 120
 ROLLING_RESET_MIN_OBSERVATION_SECONDS = 2
 ROLLING_RESET_DRIFT_TOLERANCE_SECONDS = 3
 ROLLING_RESET_MAX_DRIFT_TOLERANCE_SECONDS = 10
+IGNITE_CONFIRM_DELAYS_SECONDS = (5, 10, 15, 30)
 
 TRIGGER_PROMPT = (
     "This is an automated quota-window trigger. "
@@ -863,8 +863,7 @@ def observe_reset_behavior(state, account, now_utc):
             previous_seen = previous_reset = None
 
         if (
-            remaining >= ROLLING_RESET_MIN_REMAINING
-            and abs(offset - ROLLING_RESET_WINDOW_SECONDS) <= ROLLING_RESET_OFFSET_TOLERANCE_SECONDS
+            abs(offset - ROLLING_RESET_WINDOW_SECONDS) <= ROLLING_RESET_OFFSET_TOLERANCE_SECONDS
             and previous_seen is not None
             and previous_reset is not None
         ):
@@ -916,17 +915,6 @@ def due_at(account, state, now_utc):
     item = scheduler_state(state, account["id"])
     hold = held_until(item, now_utc)
     if item.get("rolling_reset") is True:
-        last_success = float(item.get("last_success_epoch") or 0)
-        if last_success:
-            target = datetime.fromtimestamp(
-                last_success + ROLLING_RESET_WINDOW_SECONDS + IGNITE_GRACE_SECONDS,
-                timezone.utc,
-            )
-            if target > now_utc:
-                target_local = target.astimezone(watcher.LOCAL_TZ)
-                if target_local.date() == local_now.date() and start <= target_local <= end:
-                    return target
-                return next_daily_start(now_utc)
         return hold or now_utc
 
     reset_dt = watcher.parse_time(account.get("reset"))
@@ -991,6 +979,49 @@ def poll(client, state):
     return accounts
 
 
+def refresh_account(client, account):
+    raw_groups = fetch_groups_for_provider(client, account["file"])
+    target_label = str(account.get("group_label") or account.get("label") or "").strip().lower()
+    candidates = []
+    for group in raw_groups:
+        window = five_hour_window(group)
+        if not window:
+            continue
+        candidates.append((group, window))
+        label = str(group.get("label") or "").strip().lower()
+        if target_label and label != target_label:
+            continue
+        refreshed = dict(account)
+        refreshed["remaining"] = window.get("remaining")
+        refreshed["reset"] = window.get("reset")
+        return refreshed
+    if len(candidates) == 1:
+        _, window = candidates[0]
+        refreshed = dict(account)
+        refreshed["remaining"] = window.get("remaining")
+        refreshed["reset"] = window.get("reset")
+        return refreshed
+    raise RuntimeError(f"无法重新定位 5h 额度组：{account['label']}")
+
+
+def confirm_ignition(client, state, account):
+    latest = dict(account)
+    for delay in IGNITE_CONFIRM_DELAYS_SECONDS:
+        time.sleep(delay)
+        latest = refresh_account(client, account)
+        now = datetime.now(timezone.utc)
+        rolling = observe_reset_behavior(state, latest, now)
+        reset_dt = watcher.parse_time(latest.get("reset"))
+        watcher.save_state(state)
+        if not rolling and reset_dt and reset_dt > now:
+            return latest
+        watcher.log(
+            f"等待点火确认：{account['label']} · "
+            f"reset={'滑动' if rolling else latest.get('reset') or '未知'}"
+        )
+    raise RuntimeError("点火请求已返回，但未确认到新的固定 5h reset")
+
+
 def perform_due(client, state, accounts):
     if not IGNITE_ENABLED:
         return False
@@ -1009,12 +1040,18 @@ def perform_due(client, state, accounts):
         item = scheduler_state(state, account["id"])
         try:
             model = ignite(client, account)
+            watcher.log(f"点火请求成功：{account['label']} · {model}，等待 reset 确认")
+            confirmed = confirm_ignition(client, state, account)
             stamp = time.time()
             item["last_success_epoch"] = stamp
             item["last_model"] = model
             item["last_error"] = ""
             item["retry_at_epoch"] = 0
-            watcher.log(f"窗口点火成功：{account['label']} · {model}")
+            account["remaining"] = confirmed.get("remaining")
+            account["reset"] = confirmed.get("reset")
+            reset_dt = watcher.parse_time(account.get("reset"))
+            reset_text = reset_dt.astimezone(watcher.LOCAL_TZ).strftime("%m-%d %H:%M:%S") if reset_dt else "未知"
+            watcher.log(f"窗口点火确认成功：{account['label']} · {model} · reset={reset_text}")
         except Exception as exc:
             item["last_error"] = str(exc)[:500]
             item["last_failure_epoch"] = time.time()
