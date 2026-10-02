@@ -32,7 +32,9 @@ KEEPER_CONFIG_FILE = Path(os.getenv("KEEPER_CONFIG", "/app/keeper.toml"))
 DEFAULT_PROVIDER_CONFIG = {
     "codex": {"monitor": True, "ignite": True, "model": ""},
     "claude": {"monitor": True, "ignite": True, "model": ""},
-    "antigravity": {"monitor": True, "ignite": False, "model": ""},
+    # Antigravity's Claude / GPT bucket is much smaller than Gemini's.
+    # Keep it out of automatic ignition unless explicitly opted in via groups.
+    "antigravity": {"monitor": True, "ignite": False, "model": "", "groups": ["Gemini"]},
     "xai": {"monitor": True, "ignite": False, "model": ""},
 }
 
