@@ -582,6 +582,20 @@ def _first_matching(available, predicates):
     return None
 
 
+def _model_recency_key(model):
+    # Model families we use encode generation/version/date in numeric segments.
+    # Sorting these segments descending lets newly exposed Luna/Haiku/Flash
+    # variants become the first ignition choice without hard-coding every release.
+    return tuple(int(part) for part in re.findall(r"\d+", str(model)))
+
+
+def _newest_matching(available, predicate):
+    matches = [model for model in available if predicate(model.lower())]
+    if not matches:
+        return None
+    return max(matches, key=lambda model: (_model_recency_key(model), model.lower()))
+
+
 def choose_model(client, account):
     provider = account["provider"]
     available = models_for(client, account["file"])
@@ -595,20 +609,12 @@ def choose_model(client, account):
         return override
 
     if provider == "codex":
-        preferred = ["gpt-6-luna", "gpt-5.6-luna"]
-        for model in preferred:
-            if model in available:
-                return model
-        selected = _first_matching(available, [lambda m: "luna" in m])
+        selected = _newest_matching(available, lambda m: "luna" in m)
         if selected:
             return selected
 
     if provider == "claude":
-        preferred = ["claude-haiku-4-5-20251001", "claude-haiku-4-5"]
-        for model in preferred:
-            if model in available:
-                return model
-        selected = _first_matching(available, [lambda m: "haiku" in m])
+        selected = _newest_matching(available, lambda m: "haiku" in m and "thinking" not in m)
         if selected:
             return selected
 
@@ -617,14 +623,10 @@ def choose_model(client, account):
         candidates = [m for m in available if "image" not in m.lower()]
         if "gemini" in group:
             scoped = [m for m in candidates if "gemini" in m.lower()]
-            selected = _first_matching(
-                scoped,
-                [
-                    lambda m: "flash-lite" in m,
-                    lambda m: "flash" in m,
-                    lambda m: "pro" not in m,
-                ],
-            )
+            selected = _newest_matching(scoped, lambda m: "flash" in m)
+            if selected:
+                return selected
+            selected = _newest_matching(scoped, lambda m: "pro" not in m)
             if selected:
                 return selected
         if "claude" in group or "gpt" in group:
