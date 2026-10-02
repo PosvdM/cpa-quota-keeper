@@ -55,12 +55,12 @@ class SchedulerTests(unittest.TestCase):
         due = scheduler.due_at(account, state, second)
         self.assertEqual(due, datetime(2026, 9, 28, 6, 0, 3, tzinfo=timezone.utc))
 
-    def test_rolling_reset_after_success_waits_one_window(self):
+    def test_rolling_reset_does_not_invent_five_hour_wait(self):
         state = {
             "scheduler": {
                 "antigravity:test": {
                     "rolling_reset": True,
-                    "last_success_epoch": datetime(2026, 9, 28, 6, 0, 0, tzinfo=timezone.utc).timestamp(),
+                    "last_success_epoch": datetime(2026, 9, 28, 5, 0, 0, tzinfo=timezone.utc).timestamp(),
                 }
             }
         }
@@ -69,13 +69,12 @@ class SchedulerTests(unittest.TestCase):
             "provider": "antigravity",
             "label": "Gemini",
             "remaining": 100.0,
-            "reset": "2026-09-28T11:05:00+00:00",
+            "reset": "2026-09-28T11:01:00+00:00",
         }
         now = datetime(2026, 9, 28, 6, 1, 0, tzinfo=timezone.utc)
-        due = scheduler.due_at(account, state, now)
-        self.assertEqual(due, datetime(2026, 9, 28, 11, 0, 3, tzinfo=timezone.utc))
+        self.assertEqual(scheduler.due_at(account, state, now), now)
 
-    def test_rolling_reset_detection_requires_full_quota(self):
+    def test_rolling_reset_detection_does_not_depend_on_quota_percent(self):
         state = {}
         account = {
             "id": "test:not-full",
@@ -87,7 +86,7 @@ class SchedulerTests(unittest.TestCase):
         first = datetime(2026, 9, 28, 1, 0, 0, tzinfo=timezone.utc)
         scheduler.observe_reset_behavior(state, account, first)
         account["reset"] = "2026-09-28T06:05:00+00:00"
-        self.assertFalse(scheduler.observe_reset_behavior(state, account, first + timedelta(minutes=5)))
+        self.assertTrue(scheduler.observe_reset_behavior(state, account, first + timedelta(minutes=5)))
 
     def test_skips_overnight_reset(self):
         now = datetime(2026, 9, 28, 22, 0, tzinfo=self.TZ)
