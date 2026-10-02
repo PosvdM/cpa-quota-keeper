@@ -506,6 +506,11 @@ class SchedulerTests(unittest.TestCase):
                 "gemini-3.7-flash-high",
             ]
             self.assertEqual(scheduler.choose_model(object(), account), "gemini-3.7-flash-high")
+            scheduler.models_for = lambda client, file: [
+                "gemini-pro-agent",
+                "gemini-3.1-pro-low",
+            ]
+            self.assertEqual(scheduler.choose_model(object(), account), "gemini-3.1-pro-low")
         finally:
             scheduler.models_for = old_models_for
 
