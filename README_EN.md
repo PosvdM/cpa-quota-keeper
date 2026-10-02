@@ -2,22 +2,30 @@
 
 [中文](./README.md)
 
-Monitor subscription quota in [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (CPA) and receive [Bark](https://github.com/Finb/Bark) alerts for low quota, resets, and recovery. Optional **Window Ignition** sends a tiny request to start the next real 5-hour quota window. Keeper can also forward Codex reset signals from [Did Codex Reset](https://didcodexreset.com/) to Bark.
+CPA Quota Keeper monitors subscription quota in [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (CPA) and sends [Bark](https://github.com/Finb/Bark) notifications.
 
-Multiple accounts per provider are supported without maintaining an account list. Monitoring, ignition, and Codex reset forwarding have separate switches.
+It can also:
+
+- **Ignite quota windows** by sending a very small request when a 5-hour window needs to start.
+- **Forward Codex reset signals** from [Did Codex Reset](https://didcodexreset.com/) to Bark.
+
+A provider can have multiple accounts. Monitoring, ignition, and Codex reset forwarding can be enabled separately.
 
 | Provider | Monitoring | Ignition default |
 | --- | --- | --- |
 | ChatGPT / Codex | 5-hour and 7-day windows | On |
-| Claude | 5-hour, 7-day, and Fable windows | On for 5-hour only; 7-day / Fable are monitor-only |
+| Claude | 5-hour, 7-day, and Fable windows | On for 5-hour windows only |
 | Antigravity | Gemini, Claude / GPT, and other quota groups | Off; when enabled, Gemini only by default |
 | Grok / xAI | Billing windows returned by xAI | Off |
 
-Monitoring is enabled for all providers by default. Ignition tasks are created only for detected real 5-hour windows; no 5-hour window means no ignition request.
+If the upstream provider does not expose a 5-hour window, Keeper does not send an ignition request.
 
 ## Quick start
 
-Requires a running CPA instance and Docker Compose.
+You need:
+
+- A running CPA instance
+- Docker Compose
 
 ```bash
 git clone https://github.com/PosvdM/cpa-quota-keeper.git
@@ -34,7 +42,7 @@ BARK_URL=https://api.day.app/your_device_key
 BARK_GROUP=CPA
 ```
 
-The default [compose.yaml](./compose.yaml) uses the following settings. Edit it if your setup differs:
+The default [compose.yaml](./compose.yaml) uses these paths:
 
 | Setting | Default |
 | --- | --- |
@@ -44,7 +52,11 @@ The default [compose.yaml](./compose.yaml) uses the following settings. Edit it 
 | CPA config file | `/opt/cliproxyapi/config.yaml` |
 | Extra environment file | `/opt/cliproxyapi/watcher.env` |
 
-You can reuse `MANAGEMENT_PASSWORD` from `watcher.env`. If you do not use that file, remove its `env_file` entry from `compose.yaml` and set `CPA_MANAGEMENT_KEY`.
+Edit `compose.yaml` if your setup is different.
+
+If `watcher.env` already contains `MANAGEMENT_PASSWORD`, Keeper can reuse it. Otherwise, remove that `env_file` entry and set `CPA_MANAGEMENT_KEY`.
+
+Start the service:
 
 ```bash
 docker compose up -d
@@ -53,38 +65,95 @@ docker logs -f cpa-quota-keeper
 
 ## Configuration
 
-- [`.env.example`](./.env.example): CPA, Bark, alert thresholds, polling, and timezone. Defaults to a 300-second quota refresh and UTC+8; `POLL_INTERVAL` does not control the exact ignition time.
-- [`keeper.example.toml`](./keeper.example.toml): ignition timing, provider settings, Antigravity groups, and Did Codex Reset forwarding. Edit your copy, `keeper.toml`; legacy `IGNITE_*` environment variables remain available as a compatibility fallback.
+Main configuration files:
 
-### Ignition rules
+- [`.env.example`](./.env.example): CPA, Bark, alert thresholds, polling, and timezone.
+- [`keeper.example.toml`](./keeper.example.toml): ignition timing, providers, Antigravity groups, and Did Codex Reset.
 
-By default, ignition starts at 07:00 and normally follows each window's returned `reset_at + 3 seconds`. The last round may run until 22:30; later resets wait until 07:00 the next day. Failed requests retry the same account after 5 minutes.
+Quota refresh defaults to every 300 seconds. The default timezone is UTC+8. Legacy `IGNITE_*` environment variables still work as fallback settings.
 
-Some providers expose an unstarted 5-hour window as a rolling placeholder whose `reset_at` always stays about five hours ahead of the current time. Keeper compares consecutive observations: if `reset_at` moves forward with wall-clock time, it treats the value as an unstarted placeholder instead of a real reset time.
+## Ignition
 
-A successful HTTP/model response is not immediately treated as a successful ignition. Keeper re-reads quota after roughly 5s → 10s → 15s → 30s → 15s and confirms ignition only after it sees a future, fixed `reset_at`. After confirmation, the next run is scheduled from the actual `reset_at` returned upstream; Keeper does not invent an extra fixed five-hour cooldown.
+### Scheduling
 
-Ignition uses the CPA Management API with the account's exact `auth_index`, with no failover to another account. Automatic model selection prefers the newest version in the lightweight family, then falls back to older versions:
+Ignition starts at 07:00 by default.
 
-- ChatGPT / Codex: newest **Luna**.
-- Claude: newest non-thinking **Haiku**.
-- Antigravity / Gemini: prefer the newest non-image **Flash** and fall back through older Flash versions; if no Flash is available, try other non-Pro Gemini models first and use the newest Pro model last.
-- Antigravity / Claude / GPT (not ignited by default): Haiku → Sonnet → Opus → GPT-OSS → other non-thinking text models.
-- Grok / xAI: text models whose names contain `fast` or `mini` first.
+After a window has started, the next ignition time is:
 
-When a newer Luna / Haiku / Flash model appears in the account model list, Keeper automatically prefers it by numeric version instead of requiring another hard-coded model ID. Explicit `model` or per-group `models` settings always override automatic selection.
+```text
+reset_at + 3 seconds
+```
 
-All ignition providers use the same strict prompt:
+The last run of the day may happen as late as 22:30. Later resets wait until 07:00 the next day.
+
+A failed ignition retries the same account after 5 minutes.
+
+### Detecting an unstarted 5-hour window
+
+Some providers return a placeholder `reset_at` before a 5-hour window starts. The value stays about five hours ahead of the current time and keeps moving forward.
+
+Keeper compares consecutive observations:
+
+- If `reset_at` moves with wall-clock time, Keeper treats it as a placeholder.
+- If `reset_at` stops moving, Keeper treats the window as started.
+
+This prevents a rolling placeholder from being used as a real reset time.
+
+### Confirming ignition
+
+A successful model request does not prove that the 5-hour window started.
+
+After ignition, Keeper checks quota again after about:
+
+```text
+5s → 10s → 15s → 30s → 15s
+```
+
+Ignition is confirmed only after Keeper sees a fixed future `reset_at`.
+
+After confirmation, the next ignition uses the `reset_at` returned by the provider. Keeper does not add its own fixed five-hour cooldown.
+
+### Account routing
+
+Ignition uses the account's exact CPA Management API `auth_index`.
+
+If one account fails, Keeper does not switch to another account.
+
+### Model priority
+
+An explicit `model` or per-group `models` setting always wins.
+
+Without an override:
+
+- **ChatGPT / Codex**: newest Luna, then older Luna versions.
+- **Claude**: newest non-thinking Haiku, then older Haiku versions.
+- **Antigravity / Gemini**: newest non-image Flash, then older Flash versions; if no Flash is available, other non-Pro Gemini models; Pro models are the final fallback, newest first.
+- **Antigravity / Claude / GPT**: Haiku → Sonnet → Opus → GPT-OSS → other non-thinking text models. This group is not ignited by default.
+- **Grok / xAI**: prefer text models whose names contain `fast` or `mini`.
+
+When a newer Luna, Haiku, or Flash appears in the model list, Keeper prefers it automatically by version number.
+
+### Ignition prompt
+
+All providers use the same prompt:
 
 ```text
 This is an automated quota-window trigger. Do not think, reason, deliberate, use tools, or perform any other task. Reply with exactly OK and nothing else.
 ```
 
-Codex also sets `reasoning.effort = none`, an empty tool list, and `store = false`. Claude, Antigravity, and xAI ignition responses are capped to a tiny output.
+Codex also sets:
 
-### Providers and groups
+- `reasoning.effort = none`
+- `tools = []`
+- `store = false`
 
-Use `monitor` and `ignite` to control monitoring and ignition separately. Set `model` to override automatic model selection:
+Other providers also use a very small output limit.
+
+## Providers and groups
+
+`monitor` controls monitoring. `ignite` controls ignition.
+
+Example:
 
 ```toml
 [providers.claude]
@@ -93,9 +162,9 @@ ignite = true
 model = ""
 ```
 
-Claude 7-day and Fable 5 windows are monitor-only and never participate in automatic ignition.
+Claude 7-day and Fable 5 windows are monitor-only.
 
-The Antigravity example config allows only the Gemini group to enter automatic ignition by default. The smaller `Claude / GPT` bucket is still monitored but is not consumed by ignition:
+Antigravity allows only Gemini to enter ignition by default:
 
 ```toml
 [providers.antigravity]
@@ -105,25 +174,49 @@ model = ""
 groups = ["Gemini"]
 ```
 
-To enable Antigravity ignition, set `ignite = true`; only groups listed in `groups` will be ignited. Models can also be overridden per group:
+To enable Antigravity ignition, set `ignite = true`. Only groups listed in `groups` are ignited.
+
+You can also override the model for a group:
 
 ```toml
 [providers.antigravity.models]
 "Gemini" = "your-model-id"
 ```
 
-## Notifications
+## Bark notifications
 
-- Alerts when remaining quota crosses **50%, 20%, 10%, and 0%**.
-- `NOTIFY_RESET_REMINDERS` controls reset reminders.
-- `NOTIFY_RECOVERY` controls recovery alerts.
-- The example config disables the last two to avoid redundant notifications when Window Ignition is enabled. Low-quota alerts are unaffected.
-- Notification countdowns use compact units: `d` for days, `h` for hours, and `m` for minutes, for example `06d`, `05h`, and `30m`.
-- Multi-account notifications and logs use masked suffixes, such as `alice.work@example.com` → `ChatGPT#al~rk`. Routing still uses `auth_index`.
+Keeper sends an alert when remaining quota crosses:
 
-### Did Codex Reset → Bark
+```text
+50% → 20% → 10% → 0%
+```
 
-Keeper can optionally poll the public Did Codex Reset API and forward newly published global resets, reset cards, and related Codex signals to Bark:
+Other notification settings:
+
+- `NOTIFY_RESET_REMINDERS`: reset reminders
+- `NOTIFY_RECOVERY`: recovery alerts
+
+The example config disables both to avoid duplicate notifications when ignition is enabled. Low-quota alerts still work.
+
+Time remaining uses short units:
+
+- `d`: days
+- `h`: hours
+- `m`: minutes
+
+Examples: `06d`, `05h`, `30m`.
+
+Multi-account notifications use a masked suffix, for example:
+
+```text
+alice.work@example.com → ChatGPT#al~rk
+```
+
+Requests still use `auth_index` for routing.
+
+## Did Codex Reset → Bark
+
+Keeper can poll the public Did Codex Reset API and forward new records to Bark:
 
 ```toml
 [codex_reset_updates]
@@ -132,12 +225,17 @@ poll_seconds = 300
 notify_current_pending = true
 ```
 
-- The minimum polling interval is 300 seconds.
-- On first enable, Keeper only sends the currently pending scheduled reset instead of replaying old history.
-- Later records are deduplicated with stable event keys, including manual upstream records whose IDs may rotate.
-- Records with `announcedAt` get a clickable Bark URL to the corresponding Did Codex Reset detail page.
-- The notification body includes time, confidence, and plan scope, without a source-account line.
-- Did Codex Reset is a third-party monitor; its signals are not an OpenAI guarantee.
+Rules:
+
+- Minimum polling interval: 300 seconds.
+- On first enable, Keeper sends only the currently pending schedule. It does not replay old history.
+- Later records are deduplicated with stable event keys.
+- Manual upstream records do not repeat even if their IDs change.
+- Records with `announcedAt` get a link to the Did Codex Reset detail page.
+- Tapping the Bark notification opens that page.
+- The notification body includes time, confidence, and plan scope. It does not include the source account.
+
+Did Codex Reset is a third-party monitor. Its signals are not an OpenAI confirmation.
 
 ## Commands
 
@@ -152,4 +250,12 @@ docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
 docker compose run --rm quota-keeper python /app/test_scheduler.py
 ```
 
-Do not commit keys, CPA auth files, or runtime state. `.gitignore` excludes `.env`, `keeper.toml`, and `data/`.
+Do not commit keys, CPA auth files, or runtime state.
+
+`.gitignore` excludes:
+
+```text
+.env
+keeper.toml
+data/
+```
