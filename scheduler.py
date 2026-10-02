@@ -916,6 +916,17 @@ def due_at(account, state, now_utc):
     item = scheduler_state(state, account["id"])
     hold = held_until(item, now_utc)
     if item.get("rolling_reset") is True:
+        last_success = float(item.get("last_success_epoch") or 0)
+        if last_success:
+            target = datetime.fromtimestamp(
+                last_success + ROLLING_RESET_WINDOW_SECONDS + IGNITE_GRACE_SECONDS,
+                timezone.utc,
+            )
+            if target > now_utc:
+                target_local = target.astimezone(watcher.LOCAL_TZ)
+                if target_local.date() == local_now.date() and start <= target_local <= end:
+                    return target
+                return next_daily_start(now_utc)
         return hold or now_utc
 
     reset_dt = watcher.parse_time(account.get("reset"))
