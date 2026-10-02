@@ -68,7 +68,7 @@ Ignition uses the CPA Management API with the account's exact `auth_index`, with
 
 - ChatGPT / Codex: newest **Luna**.
 - Claude: newest non-thinking **Haiku**.
-- Antigravity / Gemini: newest non-image **Flash**; if no Flash is available, the newest non-Pro Gemini model.
+- Antigravity / Gemini: prefer the newest non-image **Flash** and fall back through older Flash versions; if no Flash is available, try other non-Pro Gemini models first and use the newest Pro model last.
 - Antigravity / Claude / GPT (not ignited by default): Haiku → Sonnet → Opus → GPT-OSS → other non-thinking text models.
 - Grok / xAI: text models whose names contain `fast` or `mini` first.
 
