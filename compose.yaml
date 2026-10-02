@@ -3,6 +3,11 @@ services:
     image: python:3.12-alpine
     container_name: cpa-quota-keeper
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "1"
     command: ["python", "/app/scheduler.py"]
     env_file:
       - .env
