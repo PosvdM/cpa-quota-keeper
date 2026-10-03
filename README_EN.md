@@ -7,7 +7,7 @@ Monitor subscription quota in [CLIProxyAPI](https://github.com/router-for-me/CLI
 ## Features
 
 - **Quota monitoring**: supports multiple accounts per provider and sends alerts at 50%, 20%, 10%, and zero remaining quota.
-- **Window ignition**: sends small requests during configured hours to start quota windows. This uses a small amount of quota and can be disabled separately.
+- **Window ignition**: sends a small request through CPA's own model executor and pins it to the selected account. It can be disabled separately.
 - **Codex reset alerts**: optionally forwards reset signals from [Did Codex Reset](https://didcodexreset.com/), with links to event details.
 
 | Provider | Monitoring | Default ignition |
@@ -52,7 +52,33 @@ If you do not have `watcher.env`, remove its entry from `env_file` and keep `.en
 
 The management API URL is set in Compose's `environment` section. Changing it only in `.env` will not override that value.
 
-### 3. Start
+### 3. Install the CPA ignition bridge
+
+Skip this step if you only monitor quota and do not use automatic ignition.
+
+Keeper no longer builds provider-native model requests itself. A small CPA plugin resolves the selected `auth_index`, pins that credential, and hands the request to CPA's normal provider executor. CPA therefore keeps control of user agents, OAuth refresh, protocol translation, and model compatibility.
+
+Build the plugin:
+
+```bash
+sh cpa_plugin/quota-keeper-bridge/build.sh
+```
+
+Copy `quota-keeper-bridge.so` into CPA's `plugins` directory and enable it in CPA:
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    quota-keeper-bridge:
+      enabled: true
+      priority: 1
+```
+
+Restart CPA. The plugin registers `/v0/management/quota-keeper/ignite`, protected by the normal management key.
+
+### 4. Start
 
 ```bash
 docker compose up -d
@@ -76,6 +102,8 @@ In `keeper.toml`:
 - To subscribe to Codex reset signals, set `enabled = true` under `[codex_reset_updates]`.
 
 Ignition models are selected automatically. You can also specify them in the configuration. See the example files above for all options.
+
+Ignition failures also have a circuit breaker. Clear 4xx/model/auth/429 errors, or a request that returns successfully but never starts a fixed 5-hour window, stop automatic retries for the rest of the day. Ordinary network/5xx failures retry only twice by default, after about 5 and 15 minutes. A third failure pauses ignition until 07:00 the next day and sends one Bark alert.
 
 Did Codex Reset is a third-party monitor; its signals are not official OpenAI confirmations. The example configuration disables quota recovery alerts and pre-reset reminders. You can enable them in `.env`.
 
