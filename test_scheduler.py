@@ -102,23 +102,26 @@ class SchedulerTests(unittest.TestCase):
         due = self.due(now, "2026-09-28T14:00:00+00:00")
         self.assertEqual(due.strftime("%Y-%m-%d %H:%M:%S"), "2026-09-29 07:00:00")
 
-    def test_codex_direct_call_uses_only_selected_auth(self):
+    def test_codex_ignition_uses_cpa_executor_bridge_and_exact_auth(self):
         class FakeClient:
             def __init__(self):
                 self.calls = []
 
-            def api_call(self, auth_index, method, url, headers, data=None):
-                self.calls.append((auth_index, method, url))
-                raise RuntimeError("forced failure")
+            def management(self, path, method="GET", data=None):
+                self.calls.append((path, method, data))
+                return {"ok": True}
 
         client = FakeClient()
         account = {"provider": "codex", "file": {"provider": "codex", "auth_index": "auth-A"}}
-        with self.assertRaises(RuntimeError):
-            scheduler.ignite_codex(client, account, "gpt-6-luna")
-        self.assertEqual(
-            client.calls,
-            [("auth-A", "POST", scheduler.CODEX_RESPONSES_URL)],
-        )
+        scheduler.ignite_codex(client, account, "gpt-6-luna")
+        path, method, data = client.calls[0]
+        self.assertEqual((path, method), (scheduler.CPA_IGNITE_PATH, "POST"))
+        self.assertEqual(data["auth_index"], "auth-A")
+        self.assertEqual(data["model"], "gpt-6-luna")
+        self.assertEqual(data["entry_protocol"], "openai-response")
+        self.assertEqual(data["body"]["reasoning"], {"effort": "none"})
+        self.assertEqual(data["body"]["tools"], [])
+
 
 
     def test_compact_duration_uses_letter_units(self):
@@ -537,29 +540,29 @@ class SchedulerTests(unittest.TestCase):
         }
         self.assertIsNone(scheduler.five_hour_window(group))
 
-    def test_antigravity_ignite_uses_exact_auth(self):
+    def test_antigravity_ignite_uses_cpa_executor_bridge_and_exact_auth(self):
         class FakeClient:
             def __init__(self):
                 self.calls = []
 
-            def api_call(self, auth_index, method, url, headers, data=None):
-                self.calls.append((auth_index, method, url, data))
-                return '{"response":{"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}}'
+            def management(self, path, method="GET", data=None):
+                self.calls.append((path, method, data))
+                return {"ok": True}
 
         client = FakeClient()
         account = {
             "provider": "antigravity",
             "file": {"provider": "antigravity", "auth_index": "auth-AG"},
         }
-        old_resolve = watcher.resolve_project_id
-        try:
-            watcher.resolve_project_id = lambda client, file: "project-demo"
-            scheduler.ignite_antigravity(client, account, "gemini-demo")
-        finally:
-            watcher.resolve_project_id = old_resolve
+        scheduler.ignite_antigravity(client, account, "gemini-demo")
+        path, method, data = client.calls[0]
+        self.assertEqual((path, method), (scheduler.CPA_IGNITE_PATH, "POST"))
+        self.assertEqual(data["auth_index"], "auth-AG")
+        self.assertEqual(data["model"], "gemini-demo")
+        self.assertEqual(data["entry_protocol"], "openai")
+        self.assertEqual(data["body"]["reasoning_effort"], "none")
 
-        self.assertEqual(client.calls[0][0:3], ("auth-AG", "POST", scheduler.ANTIGRAVITY_GENERATE_URL))
-        self.assertIn('"project":"project-demo"', client.calls[0][3])
+
 
     def test_xai_five_hour_billing_is_normalized(self):
         class FakeClient:
@@ -583,14 +586,14 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(window["remaining"], 75.0)
         self.assertTrue(scheduler.is_five_hour_window(window))
 
-    def test_xai_ignite_uses_exact_auth(self):
+    def test_xai_ignite_uses_cpa_executor_bridge_and_exact_auth(self):
         class FakeClient:
             def __init__(self):
                 self.calls = []
 
-            def api_call(self, auth_index, method, url, headers, data=None):
-                self.calls.append((auth_index, method, url, data))
-                return '{"id":"resp_demo","output":[{"type":"message"}]}'
+            def management(self, path, method="GET", data=None):
+                self.calls.append((path, method, data))
+                return {"ok": True}
 
         client = FakeClient()
         account = {
@@ -602,7 +605,52 @@ class SchedulerTests(unittest.TestCase):
             },
         }
         scheduler.ignite_xai(client, account, "grok-demo")
-        self.assertEqual(client.calls[0][0:3], ("auth-X", "POST", scheduler.XAI_CLI_RESPONSES_URL))
+        path, method, data = client.calls[0]
+        self.assertEqual((path, method), (scheduler.CPA_IGNITE_PATH, "POST"))
+        self.assertEqual(data["auth_index"], "auth-X")
+        self.assertEqual(data["model"], "grok-demo")
+        self.assertEqual(data["entry_protocol"], "openai")
+
+    def test_hard_ignition_failure_opens_circuit_immediately(self):
+        item = {}
+        account = {"label": "Gemini"}
+        now = datetime(2026, 10, 3, 11, 0, tzinfo=self.TZ).astimezone(timezone.utc)
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            scheduler.record_ignition_failure(item, account, now, RuntimeError("HTTP 404: NOT_FOUND"))
+        finally:
+            watcher.send_bark = old_send
+        self.assertEqual(item["consecutive_failures"], 1)
+        self.assertGreater(item["circuit_open_until_epoch"], now.timestamp())
+        self.assertEqual(item["retry_at_epoch"], item["circuit_open_until_epoch"])
+        self.assertEqual(len(sent), 1)
+
+    def test_transient_ignition_failure_backs_off_then_circuits(self):
+        item = {}
+        account = {"label": "Gemini"}
+        now = datetime(2026, 10, 3, 11, 0, tzinfo=self.TZ).astimezone(timezone.utc)
+        old_send = watcher.send_bark
+        sent = []
+        try:
+            watcher.send_bark = lambda title, body, level: sent.append((title, body, level)) or True
+            scheduler.record_ignition_failure(item, account, now, RuntimeError("temporary network error"))
+            first_retry = item["retry_at_epoch"]
+            scheduler.record_ignition_failure(item, account, now + timedelta(minutes=5), RuntimeError("temporary network error"))
+            second_retry = item["retry_at_epoch"]
+            scheduler.record_ignition_failure(item, account, now + timedelta(minutes=20), RuntimeError("temporary network error"))
+        finally:
+            watcher.send_bark = old_send
+        self.assertEqual(first_retry, now.timestamp() + scheduler.IGNITE_FAILURE_RETRY_SECONDS)
+        self.assertEqual(
+            second_retry,
+            (now + timedelta(minutes=5)).timestamp()
+            + scheduler.IGNITE_FAILURE_RETRY_SECONDS * scheduler.IGNITE_FAILURE_BACKOFF_MULTIPLIER,
+        )
+        self.assertIn("circuit_open_until_epoch", item)
+        self.assertEqual(len(sent), 1)
+
 
 
     def test_reset_reminder_can_be_disabled(self):
