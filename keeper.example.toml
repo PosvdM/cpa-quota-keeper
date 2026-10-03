@@ -11,6 +11,9 @@ end_hour = 22
 end_grace_minutes = 30
 grace_seconds = 3
 failure_retry_seconds = 300
+# Transient failures retry at 5m, 15m, then stop for the day by default.
+max_transient_failures = 3
+failure_backoff_multiplier = 3
 post_success_hold_seconds = 60
 
 [providers.codex]
