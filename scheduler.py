@@ -7,7 +7,6 @@ import re
 import sys
 import time
 import urllib.parse
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tomllib
@@ -15,16 +14,12 @@ import tomllib
 import watcher
 
 CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
-CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 CODEX_USER_AGENT = "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
-CLAUDE_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
-ANTIGRAVITY_GENERATE_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent"
+CPA_IGNITE_PATH = "/quota-keeper/ignite"
 XAI_BILLING_URLS = [
     "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
     "https://cli-chat-proxy.grok.com/v1/billing",
 ]
-XAI_CLI_RESPONSES_URL = "https://cli-chat-proxy.grok.com/v1/responses"
-XAI_API_CHAT_URL = "https://api.x.ai/v1/chat/completions"
 XAI_CLI_VERSION = "0.2.120"
 
 KEEPER_CONFIG_FILE = Path(os.getenv("KEEPER_CONFIG", "/app/keeper.toml"))
@@ -111,6 +106,8 @@ IGNITE_END_HOUR = _window_int("end_hour", "IGNITE_END_HOUR", 22, 0, 23)
 IGNITE_END_GRACE_MINUTES = _window_int("end_grace_minutes", "IGNITE_END_GRACE_MINUTES", 30, 0)
 IGNITE_GRACE_SECONDS = _window_int("grace_seconds", "IGNITE_GRACE_SECONDS", 3, 0)
 IGNITE_FAILURE_RETRY_SECONDS = _window_int("failure_retry_seconds", "IGNITE_FAILURE_RETRY_SECONDS", 300, 60)
+IGNITE_MAX_TRANSIENT_FAILURES = _window_int("max_transient_failures", "IGNITE_MAX_TRANSIENT_FAILURES", 3, 1, 10)
+IGNITE_FAILURE_BACKOFF_MULTIPLIER = _window_int("failure_backoff_multiplier", "IGNITE_FAILURE_BACKOFF_MULTIPLIER", 3, 1, 10)
 IGNITE_POST_SUCCESS_HOLD_SECONDS = _window_int("post_success_hold_seconds", "IGNITE_POST_SUCCESS_HOLD_SECONDS", 60, 15)
 
 CODEX_RESET_UPDATES_ENABLED = _bool_value(
@@ -665,165 +662,66 @@ def choose_model(client, account):
     return available[0]
 
 
-def ignite_codex(client, account, model):
+def ignite_via_cpa(client, account, model, entry_protocol, body, exit_protocol=None):
     file = account["file"]
-    headers = codex_headers(file)
-    headers.update({"Accept": "text/event-stream", "Originator": "codex-tui"})
+    auth_index = watcher.auth_index_of(file)
+    if not auth_index:
+        raise RuntimeError("点火账号缺少 auth_index")
+    payload = {
+        "auth_index": auth_index,
+        "model": model,
+        "entry_protocol": entry_protocol,
+        "exit_protocol": exit_protocol or entry_protocol,
+        "body": body,
+    }
+    result = client.management(CPA_IGNITE_PATH, method="POST", data=payload)
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        raise RuntimeError("CPA 点火桥未确认请求成功")
+
+
+def ignite_codex(client, account, model):
     body = {
         "model": model,
         "input": [{"role": "user", "content": [{"type": "input_text", "text": TRIGGER_PROMPT}]}],
         "reasoning": {"effort": "none"},
         "tools": [],
-        "stream": True,
+        "stream": False,
         "store": False,
+        "max_output_tokens": 4,
     }
-    raw = client.api_call(
-        watcher.auth_index_of(file),
-        "POST",
-        CODEX_RESPONSES_URL,
-        headers,
-        json.dumps(body, separators=(",", ":"), ensure_ascii=False),
-    )
-    text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
-    if "response.completed" not in text:
-        raise RuntimeError("Codex 点火响应未完成")
-    if "OK" not in text:
-        raise RuntimeError("Codex 点火响应没有返回 OK")
+    ignite_via_cpa(client, account, model, "openai-response", body)
 
 
 def ignite_claude(client, account, model):
-    file = account["file"]
-    headers = {
-        "Authorization": "Bearer $TOKEN$",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-        "User-Agent": "claude-cli/2.1.280 (external, cli)",
-    }
     body = {
         "model": model,
         "max_tokens": 4,
         "messages": [{"role": "user", "content": TRIGGER_PROMPT}],
     }
-    raw = client.api_call(
-        watcher.auth_index_of(file),
-        "POST",
-        CLAUDE_MESSAGES_URL,
-        headers,
-        json.dumps(body, separators=(",", ":"), ensure_ascii=False),
-    )
-    payload = watcher.parse_jsonish(raw)
-    text = "".join(
-        part.get("text", "")
-        for part in payload.get("content", [])
-        if isinstance(part, dict) and part.get("type") == "text"
-    ).strip()
-    if payload.get("type") != "message" or not text.upper().startswith("OK"):
-        raise RuntimeError("Claude 点火响应没有返回 OK")
+    ignite_via_cpa(client, account, model, "claude", body)
 
 
 def ignite_antigravity(client, account, model):
-    file = account["file"]
-    project_id = watcher.resolve_project_id(client, file)
-    request_id = "agent-" + str(uuid.uuid4())
-    session_id = str(uuid.uuid4())
     body = {
         "model": model,
-        "project": project_id,
-        "requestId": request_id,
-        "requestType": "agent",
-        "userAgent": "antigravity",
-        "request": {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": TRIGGER_PROMPT}],
-                }
-            ],
-            "generationConfig": {
-                "maxOutputTokens": 4,
-                "temperature": 0,
-            },
-            "sessionId": session_id,
-        },
+        "messages": [{"role": "user", "content": TRIGGER_PROMPT}],
+        "max_tokens": 4,
+        "temperature": 0,
+        "reasoning_effort": "none",
+        "stream": False,
     }
-    raw = client.api_call(
-        watcher.auth_index_of(file),
-        "POST",
-        ANTIGRAVITY_GENERATE_URL,
-        dict(watcher.ANTIGRAVITY_HEADERS),
-        json.dumps(body, separators=(",", ":"), ensure_ascii=False),
-    )
-    if not raw:
-        raise RuntimeError("Antigravity 点火响应为空")
-
-
-def _nested_auth_value(file, key):
-    for container in (file, file.get("attributes"), file.get("metadata")):
-        if isinstance(container, dict) and key in container and container.get(key) is not None:
-            return container.get(key)
-    return None
-
-
-def _xai_using_api(file):
-    raw = _nested_auth_value(file, "using_api")
-    if raw is not None:
-        return _bool_value(raw, False)
-    auth_kind = str(_nested_auth_value(file, "auth_kind") or "").strip().lower()
-    if auth_kind:
-        return auth_kind != "oauth"
-    return False
+    ignite_via_cpa(client, account, model, "openai", body)
 
 
 def ignite_xai(client, account, model):
-    file = account["file"]
-    idx = watcher.auth_index_of(file)
-    if _xai_using_api(file):
-        headers = {
-            "Authorization": "Bearer $TOKEN$",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-        body = {
-            "model": model,
-            "messages": [{"role": "user", "content": TRIGGER_PROMPT}],
-            "max_tokens": 4,
-            "stream": False,
-        }
-        raw = client.api_call(
-            idx,
-            "POST",
-            XAI_API_CHAT_URL,
-            headers,
-            json.dumps(body, separators=(",", ":"), ensure_ascii=False),
-        )
-    else:
-        headers = {
-            "Authorization": "Bearer $TOKEN$",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "X-XAI-Token-Auth": "xai-grok-cli",
-            "x-grok-client-version": XAI_CLI_VERSION,
-            "User-Agent": f"xai-grok-workspace/{XAI_CLI_VERSION}",
-            "x-grok-client-identifier": "grok-shell",
-            "x-authenticateresponse": "authenticate-response",
-        }
-        body = {
-            "model": model,
-            "input": TRIGGER_PROMPT,
-            "max_output_tokens": 4,
-            "stream": False,
-        }
-        raw = client.api_call(
-            idx,
-            "POST",
-            XAI_CLI_RESPONSES_URL,
-            headers,
-            json.dumps(body, separators=(",", ":"), ensure_ascii=False),
-        )
-    if not raw:
-        raise RuntimeError("Grok 点火响应为空")
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": TRIGGER_PROMPT}],
+        "max_tokens": 4,
+        "temperature": 0,
+        "stream": False,
+    }
+    ignite_via_cpa(client, account, model, "openai", body)
 
 
 IGNITE_ADAPTERS = {
@@ -907,6 +805,8 @@ def observe_reset_behavior(state, account, now_utc):
                 rolling = abs(reset_shift - elapsed) <= tolerance
 
     item["rolling_reset"] = rolling
+    if not rolling and reset_dt and reset_dt > now_utc:
+        clear_ignition_failures(item)
     item["reset_observation"] = {
         "seen_epoch": now_epoch,
         "reset_epoch": reset_epoch,
@@ -923,6 +823,59 @@ def observe_accounts(state, accounts, now_utc=None):
     now_utc = now_utc or datetime.now(timezone.utc)
     for account in accounts:
         observe_reset_behavior(state, account, now_utc)
+
+
+def clear_ignition_failures(item):
+    item["consecutive_failures"] = 0
+    item["retry_at_epoch"] = 0
+    item.pop("circuit_open_until_epoch", None)
+    item.pop("circuit_reason", None)
+    item.pop("circuit_notified_until_epoch", None)
+
+
+def ignition_failure_is_hard(exc):
+    text = str(exc or "").lower()
+    hard_markers = (
+        "http 400", "http 401", "http 403", "http 404", "http 409", "http 422", "http 429",
+        "status 400", "status 401", "status 403", "status 404", "status 409", "status 422", "status 429",
+        "not_found", "not found", "unsupported", "invalid model", "credential is unavailable",
+        "auth credential", "未确认到新的固定 5h reset",
+    )
+    return any(marker in text for marker in hard_markers)
+
+
+def open_ignition_circuit(item, account, now_utc, reason):
+    until = next_daily_start(now_utc)
+    until_epoch = until.timestamp()
+    item["circuit_open_until_epoch"] = until_epoch
+    item["retry_at_epoch"] = until_epoch
+    item["circuit_reason"] = str(reason)[:500]
+    local_until = until.astimezone(watcher.LOCAL_TZ).strftime("%m/%d %H:%M")
+    already_notified = float(item.get("circuit_notified_until_epoch") or 0) == until_epoch
+    if not already_notified:
+        watcher.send_bark(
+            f"🛑 {account['label']} 点火已暂停",
+            f"连续或高风险错误触发保护，停止自动重试到 {local_until}。\n{str(reason)[:220]}",
+            "timeSensitive",
+        )
+        item["circuit_notified_until_epoch"] = until_epoch
+    watcher.log(f"点火保护已触发：{account['label']}，暂停到 {local_until}")
+
+
+def record_ignition_failure(item, account, now_utc, exc):
+    count = int(item.get("consecutive_failures") or 0) + 1
+    item["consecutive_failures"] = count
+    item["last_error"] = str(exc)[:500]
+    item["last_failure_epoch"] = now_utc.timestamp()
+    if ignition_failure_is_hard(exc) or count >= IGNITE_MAX_TRANSIENT_FAILURES:
+        open_ignition_circuit(item, account, now_utc, exc)
+        return
+    delay = IGNITE_FAILURE_RETRY_SECONDS * (IGNITE_FAILURE_BACKOFF_MULTIPLIER ** (count - 1))
+    item["retry_at_epoch"] = now_utc.timestamp() + delay
+    watcher.log(
+        f"窗口点火失败：{account['label']}：{exc}；{round(delay / 60)} 分钟后重试 "
+        f"({count}/{IGNITE_MAX_TRANSIENT_FAILURES})"
+    )
 
 
 def held_until(item, now_utc):
@@ -1264,17 +1217,14 @@ def perform_due(client, state, accounts):
             item["last_success_epoch"] = stamp
             item["last_model"] = model
             item["last_error"] = ""
-            item["retry_at_epoch"] = 0
+            clear_ignition_failures(item)
             account["remaining"] = confirmed.get("remaining")
             account["reset"] = confirmed.get("reset")
             reset_dt = watcher.parse_time(account.get("reset"))
             reset_text = reset_dt.astimezone(watcher.LOCAL_TZ).strftime("%m-%d %H:%M:%S") if reset_dt else "未知"
             watcher.log(f"窗口点火确认成功：{account['label']} · {model} · reset={reset_text}")
         except Exception as exc:
-            item["last_error"] = str(exc)[:500]
-            item["last_failure_epoch"] = time.time()
-            item["retry_at_epoch"] = time.time() + IGNITE_FAILURE_RETRY_SECONDS
-            watcher.log(f"窗口点火失败：{account['label']}：{exc}")
+            record_ignition_failure(item, account, datetime.now(timezone.utc), exc)
     watcher.save_state(state)
     return attempted
 
