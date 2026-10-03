@@ -56,7 +56,7 @@ The management API URL is set in Compose's `environment` section. Changing it on
 
 Skip this step if you only monitor quota and do not use automatic ignition.
 
-Keeper no longer builds provider-native model requests itself. A small CPA plugin resolves the selected `auth_index`, pins that credential, and hands the request to CPA's normal provider executor. CPA therefore keeps control of user agents, OAuth refresh, protocol translation, and model compatibility.
+Automatic ignition requires the CPA ignition bridge. The plugin sends Keeper's selected account through CPA's own model executor while keeping exact account routing. See [Architecture](./docs/architecture_EN.md) for the data flow and interface.
 
 Build the plugin:
 
@@ -117,6 +117,16 @@ View the next ignition times:
 
 ```bash
 docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
+```
+
+## Development
+
+See [Architecture](./docs/architecture_EN.md) for internal data flow and state constraints, and [Development](./docs/development_EN.md) for tests, plugin builds, and change conventions.
+
+Run unit tests with:
+
+```bash
+python3 -m unittest -v
 ```
 
 Keep the runtime state in `data/` to preserve notification and ignition records. Do not commit keys, CPA authentication files, or runtime state. Git already ignores `.env`, `keeper.toml`, and `data/`.

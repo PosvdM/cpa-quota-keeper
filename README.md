@@ -56,7 +56,7 @@ BARK_URL=https://api.day.app/your_device_key
 
 只监控额度、不使用自动点火时可以跳过这一步。
 
-点火不再由 Keeper 自己拼上游请求。它通过一个很小的 CPA 插件锁定 `auth_index`，再交给 CPA 自己的 Provider Executor。这样 User-Agent、OAuth 刷新、协议转换和模型兼容都跟正常 CPA 请求一致。
+自动点火需要 CPA 点火桥。插件把 Keeper 指定的账号交给 CPA 自己的模型执行器，并保持精确账号路由。架构和接口见 [架构文档](./docs/architecture.md)。
 
 构建插件：
 
@@ -117,6 +117,16 @@ docker compose up -d --force-recreate
 
 ```bash
 docker compose run --rm quota-keeper python /app/scheduler.py --show-schedule
+```
+
+## 开发
+
+项目内部结构、点火数据流和状态约束见 [架构文档](./docs/architecture.md)；测试、插件构建和修改约定见 [开发文档](./docs/development.md)。
+
+运行单元测试：
+
+```bash
+python3 -m unittest -v
 ```
 
 请保留 `data/` 中的运行状态，避免丢失通知与点火记录。不要提交密钥、CPA 认证文件或运行状态；`.env`、`keeper.toml` 和 `data/` 已被 Git 忽略。

@@ -31,3 +31,5 @@ POST /v0/management/quota-keeper/ignite
 ```
 
 It is intended for Quota Keeper only. The route still requires the normal CPA management key.
+
+Implementation details and the Keeper-side data flow are documented in [Architecture](../../docs/architecture_EN.md). Build and change conventions are in [Development](../../docs/development_EN.md).
