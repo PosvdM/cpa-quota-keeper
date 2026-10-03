@@ -5,3 +5,5 @@ __pycache__/
 *.pyo
 .DS_Store
 keeper.toml
+cpa_plugin/**/*.so
+cpa_plugin/**/*.h
