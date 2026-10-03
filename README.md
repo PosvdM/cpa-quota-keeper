@@ -7,7 +7,7 @@
 ## 功能
 
 - **额度监控**：支持同一服务的多个账号，额度降至 50%、20%、10% 和耗尽时发送通知。
-- **自动点火**：在设定时段发送极小请求，启动额度窗口。几乎不消耗额度，可单独关闭。
+- **自动点火**：在设定时段通过 CPA 自己的模型执行器发送极小请求，并锁定到指定账号。可单独关闭。
 - **Codex 重置提醒**：可转发 [Did Codex Reset](https://didcodexreset.com/zh.html) 的重置信号，通知支持跳转详情页。
 
 | 服务 | 监控范围 | 默认点火 |
@@ -52,7 +52,33 @@ BARK_URL=https://api.day.app/your_device_key
 
 管理接口地址在 Compose 的 `environment` 中设置，只改 `.env` 不会覆盖它。
 
-### 3. 启动
+### 3. 安装 CPA 点火桥
+
+只监控额度、不使用自动点火时可以跳过这一步。
+
+点火不再由 Keeper 自己拼上游请求。它通过一个很小的 CPA 插件锁定 `auth_index`，再交给 CPA 自己的 Provider Executor。这样 User-Agent、OAuth 刷新、协议转换和模型兼容都跟正常 CPA 请求一致。
+
+构建插件：
+
+```bash
+sh cpa_plugin/quota-keeper-bridge/build.sh
+```
+
+把生成的 `quota-keeper-bridge.so` 放进 CPA 的 `plugins` 目录，并在 CPA 配置中启用：
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    quota-keeper-bridge:
+      enabled: true
+      priority: 1
+```
+
+重启 CPA。插件会注册受管理密钥保护的 `/v0/management/quota-keeper/ignite`。
+
+### 4. 启动
 
 ```bash
 docker compose up -d
@@ -76,6 +102,8 @@ docker compose logs -f quota-keeper
 - 订阅 Codex 重置信号：将 `[codex_reset_updates]` 下的 `enabled` 改为 `true`。
 
 点火模型会自动选择，也可以在配置中指定。完整选项见上方示例文件。
+
+点火失败还有一层保护：明显的 4xx、模型不可用、认证异常、429，或“请求成功但 5 小时窗口没有真正启动”等高风险错误，会立即停止当天自动重试。普通网络/5xx 错误默认只重试两次，间隔约 5 分钟、15 分钟；第三次仍失败就停止到次日 07:00，并只发送一次 Bark 提醒。
 
 Did Codex Reset 是第三方监测站，其信号不代表 OpenAI 官方确认。示例配置默认关闭额度恢复和重置前提醒，可在 `.env` 中开启。
 
