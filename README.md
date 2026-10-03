@@ -2,6 +2,8 @@
 
 [English](./README_EN.md)
 
+> 本项目已停止维护，由 CPA 原生插件 [Lamplighter](https://github.com/PosvdM/cpa-plugin-lamplighter) 取代。Lamplighter 运行在 CPA 进程内，不需要单独的 Docker 容器和管理密钥。迁移方法见它的[发布说明](https://github.com/PosvdM/cpa-plugin-lamplighter/releases/tag/v0.1.0)。
+
 为 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)（CPA）监控订阅额度，通过 [Bark](https://github.com/Finb/Bark) 接收低额度提醒，并自动启动下一轮 5 小时额度窗口。
 
 ## 功能

@@ -2,6 +2,8 @@
 
 [中文](./README.md)
 
+> This project is no longer maintained. It is replaced by [Lamplighter](https://github.com/PosvdM/cpa-plugin-lamplighter), a native CPA plugin that runs inside the CPA process and needs neither a separate Docker container nor the management key. See its [release notes](https://github.com/PosvdM/cpa-plugin-lamplighter/releases/tag/v0.1.0) for migration.
+
 Monitor subscription quota in [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) (CPA), receive low-quota alerts through [Bark](https://github.com/Finb/Bark), and automatically start the next 5-hour quota window.
 
 ## Features
