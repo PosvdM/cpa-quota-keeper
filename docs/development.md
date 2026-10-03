@@ -47,6 +47,7 @@ python3 -m unittest -v
 
 - 滑动/固定 5 小时 `reset` 判断；
 - 日间调度边界；
+- 主额度和 Did Codex Reset 轮询的绝对时间边界；
 - Provider 模型选择顺序；
 - 点火请求是否携带精确 `auth_index`；
 - 点火桥协议；
@@ -99,6 +100,12 @@ docker compose logs -f quota-keeper
 ```
 
 `--once` 和 `--show-schedule` 仍需要可访问的 CPA Management API 和有效管理密钥，因为它们会读取真实额度。
+
+## 修改周期轮询
+
+主额度轮询和 Did Codex Reset 轮询都通过 `scheduler.next_aligned_epoch()` 计算下一次时间。周期任务按绝对时间边界调度，不使用 `time.time() + interval` 作为下一次目标；相对调度会让轮询时间随进程启动时间漂移。默认 300 秒间隔应落在每小时 `:00 / :05 / :10 / ... / :55`。
+
+修改这部分逻辑时，同时更新边界测试和中英文 README、架构文档。
 
 ## 修改 Provider 适配
 

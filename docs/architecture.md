@@ -110,6 +110,8 @@ POST /v0/management/quota-keeper/ignite
 - `end_grace_minutes = 30`
 - `grace_seconds = 3`
 
+主额度轮询和 Did Codex Reset 轮询都会在进程启动时先执行一次，后续通过 `next_aligned_epoch()` 计算下一个绝对时间边界，不从进程启动时间累计等待。默认 300 秒间隔时，两者都固定在每小时 `00 / 05 / 10 / ... / 55` 分钟触发。一次请求可能让日志晚几秒写出，但下一轮目标仍是下一个边界。
+
 固定窗口在 `reset + grace_seconds` 后触发；超出日间范围时等到下一天的 `start_hour`。
 
 失败状态保存在 `state.json` 的 `scheduler` 下。失败分两类：

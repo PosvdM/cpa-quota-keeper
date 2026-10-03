@@ -92,7 +92,7 @@ docker compose logs -f quota-keeper
 | [`.env`](./.env.example) | CPA 密钥、Bark 地址、通知阈值、轮询间隔、时区 |
 | [`keeper.toml`](./keeper.example.toml) | 点火开关和时段、各服务监控与点火、Antigravity 分组、Codex 重置提醒 |
 
-默认每 5 分钟刷新额度，时区为 UTC+8。点火从每天 07:00 开始，后续跟随额度重置时间，最晚到 22:30。
+启动后会先刷新一次额度，之后默认每 5 分钟刷新，并固定在每小时 `00 / 05 / 10 / ... / 55` 分钟触发；容器启动时间不会改变这组时间点。启用 Did Codex Reset 后，它也会先检查一次，之后默认按同一组 5 分钟边界检查。时区为 UTC+8。点火从每天 07:00 开始，后续跟随额度重置时间，最晚到 22:30。
 
 在 `keeper.toml` 中：
 

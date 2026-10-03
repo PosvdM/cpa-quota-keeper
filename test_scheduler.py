@@ -16,6 +16,30 @@ class SchedulerTests(unittest.TestCase):
         self.assertIn("Do not think, reason, deliberate", scheduler.TRIGGER_PROMPT)
         self.assertIn("Reply with exactly OK and nothing else.", scheduler.TRIGGER_PROMPT)
 
+    def test_next_aligned_epoch_uses_five_minute_boundary(self):
+        now = datetime(2026, 10, 3, 11, 38, 55, tzinfo=self.TZ).timestamp()
+        target = scheduler.next_aligned_epoch(300, now)
+        self.assertEqual(
+            datetime.fromtimestamp(target, self.TZ).strftime("%H:%M:%S"),
+            "11:40:00",
+        )
+
+    def test_next_aligned_epoch_moves_boundary_to_next_slot(self):
+        now = datetime(2026, 10, 3, 11, 40, 0, tzinfo=self.TZ).timestamp()
+        target = scheduler.next_aligned_epoch(300, now)
+        self.assertEqual(
+            datetime.fromtimestamp(target, self.TZ).strftime("%H:%M:%S"),
+            "11:45:00",
+        )
+
+    def test_codex_reset_updates_align_to_same_grid(self):
+        now = datetime(2026, 10, 3, 5, 28, 30, tzinfo=self.TZ).timestamp()
+        target = scheduler.next_aligned_epoch(scheduler.CODEX_RESET_UPDATES_POLL_SECONDS, now)
+        self.assertEqual(
+            datetime.fromtimestamp(target, self.TZ).strftime("%H:%M:%S"),
+            "05:30:00",
+        )
+
     def test_waits_for_daily_start(self):
         now = datetime(2026, 9, 28, 6, 59, tzinfo=self.TZ)
         due = self.due(now, "2026-09-27T20:00:00+00:00")

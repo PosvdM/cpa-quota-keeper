@@ -50,6 +50,7 @@ model = ""
 [codex_reset_updates]
 # Poll Did Codex Reset and forward newly published reset signals to Bark.
 # Their public API is limited to 20 requests/hour; values below 300s are clamped to 300s.
+# At the default 300s interval, periodic checks align to :00/:05/:10/.../:55.
 enabled = false
 poll_seconds = 300
 # On first enable, notify the currently pending scheduled reset (if any), but not old completed history.

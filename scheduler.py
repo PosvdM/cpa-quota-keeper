@@ -1229,6 +1229,12 @@ def perform_due(client, state, accounts):
     return attempted
 
 
+def next_aligned_epoch(interval_seconds, now_epoch=None):
+    now_epoch = time.time() if now_epoch is None else now_epoch
+    interval = max(1, int(interval_seconds))
+    return (int(now_epoch // interval) + 1) * interval
+
+
 def next_wakeup(accounts, state, next_poll_epoch):
     now = datetime.now(timezone.utc)
     times = [datetime.fromtimestamp(next_poll_epoch, timezone.utc)]
@@ -1277,14 +1283,14 @@ def main():
                 poll_codex_reset_updates(state)
             except Exception as exc:
                 watcher.log(f"Did Codex Reset 检查失败：{exc}")
-            next_reset_updates_poll = time.time() + CODEX_RESET_UPDATES_POLL_SECONDS
+            next_reset_updates_poll = next_aligned_epoch(CODEX_RESET_UPDATES_POLL_SECONDS)
 
         if now_epoch >= next_poll or not accounts:
             try:
                 accounts = poll(client, state)
             except Exception as exc:
                 watcher.log(f"额度刷新失败：{exc}")
-            next_poll = time.time() + watcher.POLL_INTERVAL
+            next_poll = next_aligned_epoch(watcher.POLL_INTERVAL)
 
         if accounts:
             attempted = perform_due(client, state, accounts)
@@ -1294,7 +1300,7 @@ def main():
                     accounts = poll(client, state)
                 except Exception as exc:
                     watcher.log(f"点火后额度刷新失败：{exc}")
-                next_poll = time.time() + watcher.POLL_INTERVAL
+                next_poll = next_aligned_epoch(watcher.POLL_INTERVAL)
 
         sleep_for = next_wakeup(accounts, state, next_poll) if accounts else min(60, watcher.POLL_INTERVAL)
         if CODEX_RESET_UPDATES_ENABLED:

@@ -47,6 +47,7 @@ The test suite focuses on:
 
 - rolling vs fixed 5-hour reset detection;
 - daytime scheduling boundaries;
+- absolute time boundaries for quota and Did Codex Reset polling;
 - provider model selection order;
 - exact `auth_index` on ignition requests;
 - ignition bridge protocol;
@@ -99,6 +100,12 @@ docker compose logs -f quota-keeper
 ```
 
 `--once` and `--show-schedule` still require a reachable CPA Management API and a valid management key because they read live quota.
+
+## Change periodic polling
+
+Quota polling and Did Codex Reset polling both use `scheduler.next_aligned_epoch()` to calculate their next run. Periodic tasks target absolute interval boundaries rather than using `time.time() + interval` as the next target; relative scheduling makes the cadence drift with process start time. With the default 300-second interval, runs should land on `:00 / :05 / :10 / ... / :55` each hour.
+
+When changing this logic, update the boundary tests and both language versions of the README and architecture docs.
 
 ## Change a provider adapter
 

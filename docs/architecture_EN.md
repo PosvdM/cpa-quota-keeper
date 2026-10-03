@@ -110,6 +110,8 @@ Default daytime settings come from `keeper.toml`:
 - `end_grace_minutes = 30`
 - `grace_seconds = 3`
 
+Quota polling and Did Codex Reset polling both run once at process startup. Later runs use `next_aligned_epoch()` to target the next absolute interval boundary instead of accumulating waits from process start. With the default 300-second interval, both target `:00 / :05 / :10 / ... / :55` each hour. A request may finish a few seconds after the boundary, but the next target remains the next boundary.
+
 A fixed window fires at `reset + grace_seconds`. A target outside the daytime range waits for the next day's `start_hour`.
 
 Failure state is stored under `scheduler` in `state.json`:

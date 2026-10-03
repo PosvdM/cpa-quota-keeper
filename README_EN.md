@@ -92,7 +92,7 @@ docker compose logs -f quota-keeper
 | [`.env`](./.env.example) | CPA key, Bark URL, alert thresholds, polling interval, timezone |
 | [`keeper.toml`](./keeper.example.toml) | Ignition switch and hours, per-provider monitoring and ignition, Antigravity groups, Codex reset alerts |
 
-Quota refreshes every 5 minutes by default, using UTC+8. Ignition starts at 07:00 each day, then follows quota reset times until 22:30.
+Quota is refreshed once at startup, then every 5 minutes by default on fixed wall-clock boundaries: `:00 / :05 / :10 / ... / :55` each hour. Container start time does not shift that cadence. When Did Codex Reset polling is enabled, it also checks once at startup and then uses the same default 5-minute boundaries. The default timezone is UTC+8. Ignition starts at 07:00 each day, then follows quota reset times until 22:30.
 
 In `keeper.toml`:
 
